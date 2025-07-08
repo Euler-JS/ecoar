@@ -82,7 +82,7 @@ class AppRouter {
         name: 'ar_experience',
         builder: (context, state) {
           final markerId = state.pathParameters['markerId']!;
-          // return ARExperiencePage(markerId: markerId);
+          return ARExperiencePage(markerId: markerId);
         },
       ),
       
