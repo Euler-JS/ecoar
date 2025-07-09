@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
-import '../../core/theme/app_theme.dart';
+import 'package:ecoar_beira/core/theme/app_theme.dart';
 
 class MapPage extends StatefulWidget {
   const MapPage({super.key});

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:ecoar_beira/core/theme/app_theme.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
