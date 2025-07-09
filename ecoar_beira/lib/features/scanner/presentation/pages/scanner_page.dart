@@ -1,11 +1,11 @@
 import 'package:ecoar_beira/core/theme/app_theme.dart';
 import 'package:ecoar_beira/core/utils/logger.dart';
-import 'package:ecoar_beira/features/ar/utils/ar_compatibility_checker.dart';
 import 'package:flutter/material.dart';
 import 'package:qr_code_scanner/qr_code_scanner.dart';
 import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:io';
+import 'dart:async';
 
 class ScannerPage extends StatefulWidget {
   const ScannerPage({super.key});
@@ -18,13 +18,18 @@ class _ScannerPageState extends State<ScannerPage>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   final GlobalKey qrKey = GlobalKey(debugLabel: 'QR');
   QRViewController? controller;
+  Timer? _fallbackTimer;
   
   bool isScanning = true;
   bool hasPermission = false;
   bool isFlashOn = false;
   bool isProcessingQR = false;
   bool _isInitialized = false;
+  bool _forceCamera = false;  // Flag para forçar carregamento da câmera
+  bool _qrViewWorking = false; // Flag para detectar se QR View está funcionando
+  bool _permissionCheckDisabled = false; // Flag para parar verificações desnecessárias
   String? _errorMessage;
+  int _permissionAttempts = 0;
   
   late AnimationController _animationController;
   late Animation<double> _scanLineAnimation;
@@ -36,7 +41,7 @@ class _ScannerPageState extends State<ScannerPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _setupAnimations();
-    // _initializeCamera();
+    _initializeScanner();
   }
 
   @override
@@ -54,6 +59,7 @@ class _ScannerPageState extends State<ScannerPage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _fallbackTimer?.cancel();
     _animationController.dispose();
     _pulseController.dispose();
     controller?.dispose();
@@ -62,19 +68,31 @@ class _ScannerPageState extends State<ScannerPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    AppLogger.i('App lifecycle state changed: $state');
+    
+    if (state == AppLifecycleState.resumed) {
+      // Quando volta do background, tenta forçar câmera
+      AppLogger.i('App resumed, forcing camera check...');
+      Future.delayed(const Duration(milliseconds: 1000), () {
+        if (mounted && !_qrViewWorking) {
+          _tryForceCamera();
+        }
+      });
+    }
+    
     if (controller == null) return;
     
     switch (state) {
       case AppLifecycleState.resumed:
-        if (hasPermission) {
+        if (_qrViewWorking) {
           controller!.resumeCamera();
-        } else {
-          // _checkCameraPermission();
         }
         break;
       case AppLifecycleState.inactive:
       case AppLifecycleState.paused:
-        controller!.pauseCamera();
+        if (_qrViewWorking) {
+          controller!.pauseCamera();
+        }
         break;
       case AppLifecycleState.detached:
         controller!.dispose();
@@ -104,134 +122,115 @@ class _ScannerPageState extends State<ScannerPage>
     _pulseController.repeat(reverse: true);
   }
 
-  Future<void> _initializeCamera() async {
-    AppLogger.i('Inicializando câmera...');
+  Future<void> _initializeScanner() async {
+    AppLogger.i('Inicializando scanner...');
     
-    try {
-      // await _checkCameraPermission();
-      
-      if (hasPermission) {
-        setState(() {
-          _isInitialized = true;
-          _errorMessage = null;
-        });
-        AppLogger.i('Câmera inicializada com sucesso');
-      }
-    } catch (e, stackTrace) {
-      AppLogger.e('Erro ao inicializar câmera', e, stackTrace);
-      setState(() {
-        _errorMessage = 'Erro ao inicializar câmera: $e';
-        hasPermission = false;
-      });
+    setState(() {
+      _isInitialized = true;
+    });
+    
+    // Primeira tentativa: verificar permissão normalmente
+    await _checkPermissionOnce();
+    
+    // Se não conseguiu permissão, inicia fallback timer
+    if (!hasPermission && !_permissionCheckDisabled) {
+      _startFallbackTimer();
     }
   }
 
-  Future<void> _checkCameraPermission() async {
-    AppLogger.i('Verificando permissões da câmera...');
+  Future<void> _checkPermissionOnce() async {
+    if (_permissionCheckDisabled) return;
+    
+    AppLogger.i('Verificando permissão única vez...');
+    _permissionAttempts++;
     
     try {
       final status = await Permission.camera.status;
-      AppLogger.i('Status atual da permissão: $status');
+      AppLogger.i('Status da permissão: $status');
       
       if (status.isGranted) {
-        setState(() {
-          hasPermission = true;
-          _errorMessage = null;
-        });
+        AppLogger.i('Permissão concedida!');
+        _setPermissionGranted();
         return;
       }
       
-      if (status.isDenied) {
-        AppLogger.i('Solicitando permissão de câmera...');
+      // Se negada e ainda não tentou solicitar
+      if (status.isDenied && _permissionAttempts == 1) {
+        AppLogger.i('Tentando solicitar permissão...');
         final result = await Permission.camera.request();
         AppLogger.i('Resultado da solicitação: $result');
         
-        setState(() {
-          hasPermission = result.isGranted;
-          if (!result.isGranted) {
-            _errorMessage = 'Permissão de câmera negada';
-          }
-        });
-        
         if (result.isGranted) {
-          // Pequeno delay para garantir que a permissão foi aplicada
-          await Future.delayed(const Duration(milliseconds: 500));
-          if (mounted) {
-            setState(() {});
-          }
+          _setPermissionGranted();
+          return;
         }
-      } else if (status.isPermanentlyDenied) {
-        AppLogger.w('Permissão de câmera permanentemente negada');
-        setState(() {
-          hasPermission = false;
-          _errorMessage = 'Permissão de câmera permanentemente negada';
-        });
-        _showPermissionDeniedDialog();
       }
+      
+      // Se chegou aqui, não conseguiu permissão
+      AppLogger.w('Não conseguiu permissão. Tentativas: $_permissionAttempts');
+      
+      // Após 2 tentativas, para de verificar e usa fallback
+      if (_permissionAttempts >= 2) {
+        AppLogger.i('Muitas tentativas. Ativando fallback...');
+        _permissionCheckDisabled = true;
+        setState(() {
+          _errorMessage = 'Tentando carregar câmera...';
+        });
+      }
+      
     } catch (e, stackTrace) {
-      AppLogger.e('Erro ao verificar permissão de câmera', e, stackTrace);
-      setState(() {
-        hasPermission = false;
-        _errorMessage = 'Erro ao verificar permissões: $e';
-      });
+      AppLogger.e('Erro ao verificar permissão', e, stackTrace);
+      _permissionCheckDisabled = true;
     }
   }
 
-  void _showPermissionDeniedDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.warning_amber, color: AppTheme.warningOrange, size: 28),
-            SizedBox(width: 12),
-            Text('Permissão Necessária'),
-          ],
+  void _setPermissionGranted() {
+    AppLogger.i('Permissão configurada como concedida');
+    setState(() {
+      hasPermission = true;
+      _errorMessage = null;
+    });
+    _fallbackTimer?.cancel();
+    _permissionCheckDisabled = true;
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Permissão de câmera concedida! 📸'),
+          backgroundColor: AppTheme.successGreen,
+          duration: Duration(seconds: 2),
         ),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Para usar o scanner QR, você precisa permitir o acesso à câmera.',
-              style: TextStyle(fontSize: 16),
-            ),
-            SizedBox(height: 12),
-            Text(
-              'Passos para ativar:',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: 8),
-            Text('1. Toque em "Abrir Configurações"'),
-            Text('2. Encontre "EcoAR Beira" na lista'),
-            Text('3. Ative a permissão de "Câmera"'),
-            Text('4. Volte ao aplicativo'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              context.go('/home');
-            },
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.of(context).pop();
-              await openAppSettings();
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primaryGreen,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Abrir Configurações'),
-          ),
-        ],
-      ),
-    );
+      );
+    }
+  }
+
+  void _startFallbackTimer() {
+    AppLogger.i('Iniciando timer de fallback...');
+    
+    _fallbackTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted && !hasPermission && !_qrViewWorking) {
+        AppLogger.i('Fallback timer ativado - forçando câmera');
+        _tryForceCamera();
+      }
+    });
+  }
+
+  void _tryForceCamera() {
+    AppLogger.i('Tentando forçar carregamento da câmera...');
+    
+    setState(() {
+      _forceCamera = true;
+      _errorMessage = 'Forçando carregamento da câmera...';
+    });
+    
+    // Pequeno delay para UI atualizar
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        setState(() {
+          _errorMessage = null;
+        });
+      }
+    });
   }
 
   @override
@@ -240,90 +239,34 @@ class _ScannerPageState extends State<ScannerPage>
       return _buildLoadingScreen();
     }
     
-    if (!hasPermission) {
-      return _buildPermissionScreen();
+    // Se tem permissão ou está forçando câmera, mostra scanner
+    if (hasPermission || _forceCamera) {
+      return _buildMainScanner();
     }
-
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        title: const Text('Scanner QR'),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: Icon(isScanning ? Icons.pause : Icons.play_arrow),
-            onPressed: _toggleScanning,
-            color: Colors.white,
-          ),
-          IconButton(
-            icon: Icon(isFlashOn ? Icons.flash_off : Icons.flash_on),
-            onPressed: _toggleFlash,
-            color: Colors.white,
-          ),
-          IconButton(
-            icon: const Icon(Icons.help_outline),
-            onPressed: _showHelpDialog,
-            color: Colors.white,
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          // QR Camera View
-          _buildQRView(),
-          
-          // Scanning Overlay
-          _buildScanningOverlay(),
-          
-          // Instructions
-          _buildInstructions(),
-          
-          // Processing Overlay
-          if (isProcessingQR) _buildProcessingOverlay(),
-        ],
-      ),
-    );
+    
+    // Se não tem permissão e não está forçando, mostra tela de permissão
+    return _buildPermissionScreen();
   }
 
   Widget _buildLoadingScreen() {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Center(
+      body: const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const CircularProgressIndicator(
+            CircularProgressIndicator(
               valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryGreen),
             ),
-            const SizedBox(height: 24),
-            const Text(
-              'Inicializando câmera...',
+            SizedBox(height: 24),
+            Text(
+              'Inicializando scanner...',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
               ),
             ),
-            if (_errorMessage != null) ...[
-              const SizedBox(height: 16),
-              Text(
-                _errorMessage!,
-                style: const TextStyle(
-                  color: Colors.red,
-                  fontSize: 14,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: _initializeCamera,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primaryGreen,
-                ),
-                child: const Text('Tentar Novamente'),
-              ),
-            ],
           ],
         ),
       ),
@@ -349,7 +292,7 @@ class _ScannerPageState extends State<ScannerPage>
               ),
               const SizedBox(height: 24),
               const Text(
-                'Permissão de Câmera Necessária',
+                'Permissão de Câmera',
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
@@ -358,30 +301,65 @@ class _ScannerPageState extends State<ScannerPage>
               ),
               const SizedBox(height: 16),
               const Text(
-                'Para escanear códigos QR e usar experiências AR, precisamos acessar sua câmera.',
+                'Parece que a câmera não está acessível. Vamos tentar algumas opções:',
                 style: TextStyle(fontSize: 16),
                 textAlign: TextAlign.center,
               ),
+              
               if (_errorMessage != null) ...[
                 const SizedBox(height: 16),
-                Text(
-                  _errorMessage!,
-                  style: const TextStyle(
-                    color: Colors.red,
-                    fontSize: 14,
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade200),
                   ),
-                  textAlign: TextAlign.center,
+                  child: Text(
+                    _errorMessage!,
+                    style: const TextStyle(
+                      color: Colors.blue,
+                      fontSize: 14,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
                 ),
               ],
+              
               const SizedBox(height: 32),
+              
+              // Botão para verificar permissão
               ElevatedButton(
-                onPressed: _checkCameraPermission,
+                onPressed: _permissionCheckDisabled ? null : () {
+                  _checkPermissionOnce();
+                },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.primaryGreen,
                   padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  minimumSize: const Size(double.infinity, 50),
+                ),
+                child: Text(
+                  _permissionCheckDisabled ? 'Verificação Desabilitada' : 'Verificar Permissão',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 16),
+              
+              // Botão para forçar câmera
+              ElevatedButton(
+                onPressed: _tryForceCamera,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange,
+                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  minimumSize: const Size(double.infinity, 50),
                 ),
                 child: const Text(
-                  'Permitir Acesso à Câmera',
+                  'Tentar Carregar Câmera',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 16,
@@ -389,13 +367,173 @@ class _ScannerPageState extends State<ScannerPage>
                   ),
                 ),
               ),
+              
               const SizedBox(height: 16),
+              
+              // Botão para configurações
+              OutlinedButton(
+                onPressed: () async {
+                  await openAppSettings();
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.primaryGreen,
+                  side: const BorderSide(color: AppTheme.primaryGreen),
+                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  minimumSize: const Size(double.infinity, 50),
+                ),
+                child: const Text(
+                  'Abrir Configurações',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 16),
+              
+              // Botão para voltar
               TextButton(
                 onPressed: () => context.go('/home'),
                 child: const Text('Voltar para Início'),
               ),
+              
+              const SizedBox(height: 24),
+              
+              // Instruções
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.info_outline, size: 16, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Text(
+                          'Soluções:',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '1. Tente "Tentar Carregar Câmera" (mais eficaz)\n'
+                      '2. Vá em Configurações > EcoAR Beira > Câmera\n'
+                      '3. Ative a permissão e volte ao app',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Tentativas de permissão: $_permissionAttempts',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMainScanner() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: Text(_qrViewWorking ? 'Scanner QR' : 'Carregando Câmera...'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: Icon(isScanning ? Icons.pause : Icons.play_arrow),
+            onPressed: _qrViewWorking ? _toggleScanning : null,
+            color: Colors.white,
+          ),
+          IconButton(
+            icon: Icon(isFlashOn ? Icons.flash_off : Icons.flash_on),
+            onPressed: _qrViewWorking ? _toggleFlash : null,
+            color: Colors.white,
+          ),
+          IconButton(
+            icon: const Icon(Icons.help_outline),
+            onPressed: _showHelpDialog,
+            color: Colors.white,
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          // QR Camera View
+          _buildQRView(),
+          
+          // Scanning Overlay (só se QR View estiver funcionando)
+          if (_qrViewWorking) _buildScanningOverlay(),
+          
+          // Instructions
+          _buildInstructions(),
+          
+          // Processing Overlay
+          if (isProcessingQR) _buildProcessingOverlay(),
+          
+          // Loading overlay se não estiver funcionando
+          if (!_qrViewWorking) _buildCameraLoadingOverlay(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCameraLoadingOverlay() {
+    return Container(
+      color: Colors.black.withOpacity(0.8),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryGreen),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Carregando câmera...',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Se a câmera não aparecer em alguns segundos,\ntente voltar e usar "Tentar Carregar Câmera"',
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 14,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: () => context.go('/home'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryGreen,
+              ),
+              child: const Text(
+                'Voltar e Tentar Novamente',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -420,6 +558,28 @@ class _ScannerPageState extends State<ScannerPage>
     this.controller = controller;
     AppLogger.i('QR View criada com sucesso');
     
+    // Se chegou aqui, a câmera está funcionando!
+    if (!_qrViewWorking) {
+      AppLogger.i('QR View funcionando! Câmera detectada.');
+      setState(() {
+        _qrViewWorking = true;
+        hasPermission = true;
+        _errorMessage = null;
+      });
+      
+      _fallbackTimer?.cancel();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Câmera carregada com sucesso! 🎉'),
+            backgroundColor: AppTheme.successGreen,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+    
     controller.scannedDataStream.listen((scanData) {
       if (scanData.code != null && isScanning && !isProcessingQR) {
         AppLogger.i('QR Code detectado: ${scanData.code}');
@@ -429,17 +589,24 @@ class _ScannerPageState extends State<ScannerPage>
   }
 
   void _onPermissionSet(QRViewController controller, bool p) {
-    AppLogger.i('Permissão configurada: $p');
-    if (!p) {
-      AppLogger.e('Permissão negada pelo QR View');
-      setState(() {
-        hasPermission = false;
-        _errorMessage = 'Permissão de câmera negada';
-      });
+    AppLogger.i('Permissão configurada pelo QR View: $p');
+    
+    if (p) {
+      AppLogger.i('Permissão concedida pelo QR View!');
+      if (!_qrViewWorking) {
+        setState(() {
+          _qrViewWorking = true;
+          hasPermission = true;
+          _errorMessage = null;
+        });
+        _fallbackTimer?.cancel();
+      }
+    } else {
+      AppLogger.w('Permissão negada pelo QR View');
+      // Não faz nada - deixa o timer de fallback lidar com isso
     }
   }
 
-  // Resto dos métodos permanecem iguais...
   Widget _buildScanningOverlay() {
     return Center(
       child: Container(
@@ -621,15 +788,17 @@ class _ScannerPageState extends State<ScannerPage>
               ),
               child: Column(
                 children: [
-                  const Icon(
-                    Icons.qr_code_scanner,
+                  Icon(
+                    _qrViewWorking ? Icons.qr_code_scanner : Icons.camera_alt,
                     size: 48,
                     color: Colors.white,
                   ),
                   const SizedBox(height: 16),
-                  const Text(
-                    'Posicione o código QR dentro da área de escaneamento',
-                    style: TextStyle(
+                  Text(
+                    _qrViewWorking 
+                      ? 'Posicione o código QR dentro da área de escaneamento'
+                      : 'Aguarde enquanto carregamos a câmera...',
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -637,35 +806,34 @@ class _ScannerPageState extends State<ScannerPage>
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
-                  const Text(
-                    'Encontre os marcadores nos parques da Beira para começar experiências AR incríveis!',
-                    style: TextStyle(
+                  Text(
+                    _qrViewWorking
+                      ? 'Encontre os marcadores nos parques da Beira para começar experiências AR incríveis!'
+                      : 'Se não funcionar, volte e tente "Tentar Carregar Câmera"',
+                    style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 14,
                     ),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 20),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      _buildActionButton(
-                        Icons.map,
-                        'Ver Mapa',
-                        () => context.go('/map'),
-                      ),
-                      _buildActionButton(
-                        Icons.help,
-                        'Ajuda',
-                        _showHelpDialog,
-                      ),
-                      _buildActionButton(
-                        Icons.view_in_ar,
-                        'Sobre AR',
-                        () => context.go('/ar-compatibility'),
-                      ),
-                    ],
-                  ),
+                  if (_qrViewWorking) ...[
+                    const SizedBox(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _buildActionButton(
+                          Icons.map,
+                          'Ver Mapa',
+                          () => context.go('/map'),
+                        ),
+                        _buildActionButton(
+                          Icons.help,
+                          'Ajuda',
+                          _showHelpDialog,
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -871,6 +1039,12 @@ class _ScannerPageState extends State<ScannerPage>
               Text('• Bacia 1: Biodiversidade'),
               Text('• Bacia 2: Recursos Hídricos'),
               Text('• Bacia 3: Agricultura Urbana'),
+              SizedBox(height: 16),
+              Text('🔧 Problemas com a câmera:', style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(height: 8),
+              Text('• Volte e use "Tentar Carregar Câmera"'),
+              Text('• Verifique permissões nas configurações'),
+              Text('• Reinicie o app se necessário'),
             ],
           ),
         ),
