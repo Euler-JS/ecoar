@@ -13,11 +13,13 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>NSCameraUsageDescription</key>
-	<string>This app needs camera access for AR experiences</string>
+	<string>Este aplicativo precisa acessar a câmera para escanear códigos QR e utilizar recursos de Realidade Aumentada para experiências educativas.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>This app needs location access to find nearby markers</string>
+	<string>Este aplicativo precisa da sua localização para mostrar marcadores próximos e experiências AR contextualizadas.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+    <string>Este aplicativo precisa acessar suas fotos para salvar capturas de tela das experiências AR.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>This app needs microphone access for AR audio</string>
+	<string>Este aplicativo pode usar o microfone para experiências AR interativas.</string>
 	<key>CFBundleName</key>
 	<string>ecoar_beira</string>
 	<key>CFBundlePackageType</key>
@@ -47,9 +49,18 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	 <!-- Suporte a ARKit -->
+    <key>UIRequiredDeviceCapabilities</key>
+    <array>
+        <string>armv7</string>
+        <string>arkit</string>
+    </array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- Configurações Flutter -->
+    <key>io.flutter.embedded_views_preview</key>
+    <true/>
 </dict>
 </plist>

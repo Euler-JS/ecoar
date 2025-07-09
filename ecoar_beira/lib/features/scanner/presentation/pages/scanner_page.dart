@@ -1,4 +1,3 @@
-// lib/features/scanner/presentation/pages/scanner_page.dart
 import 'package:ecoar_beira/core/theme/app_theme.dart';
 import 'package:ecoar_beira/core/utils/logger.dart';
 import 'package:ecoar_beira/features/ar/utils/ar_compatibility_checker.dart';
@@ -6,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_code_scanner/qr_code_scanner.dart';
 import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'dart:io';
 
 class ScannerPage extends StatefulWidget {
   const ScannerPage({super.key});
@@ -15,7 +15,7 @@ class ScannerPage extends StatefulWidget {
 }
 
 class _ScannerPageState extends State<ScannerPage>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   final GlobalKey qrKey = GlobalKey(debugLabel: 'QR');
   QRViewController? controller;
   
@@ -23,6 +23,8 @@ class _ScannerPageState extends State<ScannerPage>
   bool hasPermission = false;
   bool isFlashOn = false;
   bool isProcessingQR = false;
+  bool _isInitialized = false;
+  String? _errorMessage;
   
   late AnimationController _animationController;
   late Animation<double> _scanLineAnimation;
@@ -32,23 +34,26 @@ class _ScannerPageState extends State<ScannerPage>
   @override
   void initState() {
     super.initState();
-    // WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _setupAnimations();
-    _checkCameraPermission();
+    _initializeCamera();
   }
 
   @override
   void reassemble() {
     super.reassemble();
-    if (Theme.of(context).platform == TargetPlatform.android) {
-      controller?.pauseCamera();
-    } else if (Theme.of(context).platform == TargetPlatform.iOS) {
-      controller?.resumeCamera();
+    if (controller != null) {
+      if (Platform.isAndroid) {
+        controller!.pauseCamera();
+      } else if (Platform.isIOS) {
+        controller!.resumeCamera();
+      }
     }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _animationController.dispose();
     _pulseController.dispose();
     controller?.dispose();
@@ -56,12 +61,28 @@ class _ScannerPageState extends State<ScannerPage>
   }
 
   @override
-void didChangeAppLifecycleState(AppLifecycleState state) {
-  if (state == AppLifecycleState.resumed) {
-    // Verificar permissão novamente quando o app volta do background
-    _checkCameraPermission();
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (controller == null) return;
+    
+    switch (state) {
+      case AppLifecycleState.resumed:
+        if (hasPermission) {
+          controller!.resumeCamera();
+        } else {
+          _checkCameraPermission();
+        }
+        break;
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+        controller!.pauseCamera();
+        break;
+      case AppLifecycleState.detached:
+        controller!.dispose();
+        break;
+      case AppLifecycleState.hidden:
+        break;
+    }
   }
-}
 
   void _setupAnimations() {
     _animationController = AnimationController(
@@ -83,95 +104,142 @@ void didChangeAppLifecycleState(AppLifecycleState state) {
     _pulseController.repeat(reverse: true);
   }
 
-Future<void> _checkCameraPermission() async {
-  try {
-    final currentStatus = await Permission.camera.status;
+  Future<void> _initializeCamera() async {
+    AppLogger.i('Inicializando câmera...');
     
-    if (currentStatus.isGranted) {
-      setState(() {
-        hasPermission = true;
-      });
-      return;
-    }
-    
-    if (currentStatus.isDenied) {
-      // Solicita permissão pela primeira vez
-      final result = await Permission.camera.request();
-      setState(() {
-        hasPermission = result.isGranted;
-      });
+    try {
+      await _checkCameraPermission();
       
-      if (result.isGranted) {
-        // Permissão concedida, reinicializar o QR View
-        Future.delayed(const Duration(milliseconds: 100), () {
-          setState(() {});
+      if (hasPermission) {
+        setState(() {
+          _isInitialized = true;
+          _errorMessage = null;
         });
+        AppLogger.i('Câmera inicializada com sucesso');
       }
-    } else if (currentStatus.isPermanentlyDenied) {
-      // Mostrar diálogo para ir às configurações
-      _showPermissionDeniedDialog();
+    } catch (e, stackTrace) {
+      AppLogger.e('Erro ao inicializar câmera', e, stackTrace);
+      setState(() {
+        _errorMessage = 'Erro ao inicializar câmera: $e';
+        hasPermission = false;
+      });
     }
-  } catch (e) {
-    print('Erro ao verificar permissão de câmera: $e');
-    // Tentar abrir as configurações como fallback
-    _showPermissionDeniedDialog();
   }
-}
 
-void _showPermissionDeniedDialog() {
-  showDialog(
-    context: context,
-    builder: (context) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Row(
-        children: [
-          Icon(Icons.warning_amber, color: AppTheme.warningOrange, size: 28),
-          SizedBox(width: 12),
-          Text('Permissão Negada'),
+  Future<void> _checkCameraPermission() async {
+    AppLogger.i('Verificando permissões da câmera...');
+    
+    try {
+      final status = await Permission.camera.status;
+      AppLogger.i('Status atual da permissão: $status');
+      
+      if (status.isGranted) {
+        setState(() {
+          hasPermission = true;
+          _errorMessage = null;
+        });
+        return;
+      }
+      
+      if (status.isDenied) {
+        AppLogger.i('Solicitando permissão de câmera...');
+        final result = await Permission.camera.request();
+        AppLogger.i('Resultado da solicitação: $result');
+        
+        setState(() {
+          hasPermission = result.isGranted;
+          if (!result.isGranted) {
+            _errorMessage = 'Permissão de câmera negada';
+          }
+        });
+        
+        if (result.isGranted) {
+          // Pequeno delay para garantir que a permissão foi aplicada
+          await Future.delayed(const Duration(milliseconds: 500));
+          if (mounted) {
+            setState(() {});
+          }
+        }
+      } else if (status.isPermanentlyDenied) {
+        AppLogger.w('Permissão de câmera permanentemente negada');
+        setState(() {
+          hasPermission = false;
+          _errorMessage = 'Permissão de câmera permanentemente negada';
+        });
+        _showPermissionDeniedDialog();
+      }
+    } catch (e, stackTrace) {
+      AppLogger.e('Erro ao verificar permissão de câmera', e, stackTrace);
+      setState(() {
+        hasPermission = false;
+        _errorMessage = 'Erro ao verificar permissões: $e';
+      });
+    }
+  }
+
+  void _showPermissionDeniedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber, color: AppTheme.warningOrange, size: 28),
+            SizedBox(width: 12),
+            Text('Permissão Necessária'),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Para usar o scanner QR, você precisa permitir o acesso à câmera.',
+              style: TextStyle(fontSize: 16),
+            ),
+            SizedBox(height: 12),
+            Text(
+              'Passos para ativar:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 8),
+            Text('1. Toque em "Abrir Configurações"'),
+            Text('2. Encontre "EcoAR Beira" na lista'),
+            Text('3. Ative a permissão de "Câmera"'),
+            Text('4. Volte ao aplicativo'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              context.go('/home');
+            },
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              await openAppSettings();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryGreen,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Abrir Configurações'),
+          ),
         ],
       ),
-      content: const Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'A permissão de câmera foi negada permanentemente.',
-            style: TextStyle(fontSize: 16),
-          ),
-          SizedBox(height: 12),
-          Text(
-            'Para usar o scanner QR, você precisa:',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          SizedBox(height: 8),
-          Text('1. Ir para Configurações > Privacidade > Câmera'),
-          Text('2. Encontrar "Ecoar Beira" e ativar'),
-          Text('3. Voltar ao aplicativo'),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancelar'),
-        ),
-        ElevatedButton(
-          onPressed: () async {
-            Navigator.of(context).pop();
-            await openAppSettings();
-          },
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.primaryGreen,
-            foregroundColor: Colors.white,
-          ),
-          child: const Text('Abrir Configurações'),
-        ),
-      ],
-    ),
-  );
-}
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (!_isInitialized) {
+      return _buildLoadingScreen();
+    }
+    
     if (!hasPermission) {
       return _buildPermissionScreen();
     }
@@ -218,6 +286,50 @@ void _showPermissionDeniedDialog() {
     );
   }
 
+  Widget _buildLoadingScreen() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryGreen),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Inicializando câmera...',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                _errorMessage!,
+                style: const TextStyle(
+                  color: Colors.red,
+                  fontSize: 14,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _initializeCamera,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primaryGreen,
+                ),
+                child: const Text('Tentar Novamente'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildPermissionScreen() {
     return Scaffold(
       appBar: AppBar(
@@ -250,6 +362,17 @@ void _showPermissionDeniedDialog() {
                 style: TextStyle(fontSize: 16),
                 textAlign: TextAlign.center,
               ),
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 16),
+                Text(
+                  _errorMessage!,
+                  style: const TextStyle(
+                    color: Colors.red,
+                    fontSize: 14,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
               const SizedBox(height: 32),
               ElevatedButton(
                 onPressed: _checkCameraPermission,
@@ -289,16 +412,34 @@ void _showPermissionDeniedDialog() {
         borderWidth: 0,
         cutOutSize: 280,
       ),
-      onPermissionSet: (ctrl, hasPermission) {
-        if (!hasPermission) {
-        setState(() {
-          this.hasPermission = false;
-        });
-      }
-      },
+      onPermissionSet: (ctrl, p) => _onPermissionSet(ctrl, p),
     );
   }
 
+  void _onQRViewCreated(QRViewController controller) {
+    this.controller = controller;
+    AppLogger.i('QR View criada com sucesso');
+    
+    controller.scannedDataStream.listen((scanData) {
+      if (scanData.code != null && isScanning && !isProcessingQR) {
+        AppLogger.i('QR Code detectado: ${scanData.code}');
+        _handleQRCode(scanData.code!);
+      }
+    });
+  }
+
+  void _onPermissionSet(QRViewController controller, bool p) {
+    AppLogger.i('Permissão configurada: $p');
+    if (!p) {
+      AppLogger.e('Permissão negada pelo QR View');
+      setState(() {
+        hasPermission = false;
+        _errorMessage = 'Permissão de câmera negada';
+      });
+    }
+  }
+
+  // Resto dos métodos permanecem iguais...
   Widget _buildScanningOverlay() {
     return Center(
       child: Container(
@@ -577,7 +718,7 @@ void _showPermissionDeniedDialog() {
             ),
             SizedBox(height: 24),
             Text(
-              'Verificando compatibilidade AR...',
+              'Processando código QR...',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 16,
@@ -590,47 +731,27 @@ void _showPermissionDeniedDialog() {
     );
   }
 
-  void _onQRViewCreated(QRViewController controller) {
-    this.controller = controller;
-    controller.scannedDataStream.listen((scanData) {
-      if (scanData.code != null && isScanning && !isProcessingQR) {
-        _handleQRCode(scanData.code!);
-      }
-    });
-  }
-
   Future<void> _handleQRCode(String qrCode) async {
     if (isProcessingQR) return;
 
-    // Pause scanning to prevent multiple scans
     setState(() {
       isScanning = false;
       isProcessingQR = true;
     });
     controller?.pauseCamera();
 
-    AppLogger.i('QR Code scanned: $qrCode');
-
     try {
-      // Check AR compatibility before proceeding
-      final compatibilityResult = await ARCompatibilityChecker.instance.checkCompatibility();
+      await Future.delayed(const Duration(milliseconds: 1000));
       
       setState(() {
         isProcessingQR = false;
       });
 
-      if (!compatibilityResult.isSupported) {
-        _showARCompatibilityDialog(compatibilityResult);
-        return;
-      }
-
-      // Validate QR code format
       if (!_isValidQRCode(qrCode)) {
         _showInvalidQRDialog(qrCode);
         return;
       }
 
-      // Show success dialog
       _showSuccessDialog(qrCode);
 
     } catch (e, stackTrace) {
@@ -643,13 +764,11 @@ void _showPermissionDeniedDialog() {
   }
 
   bool _isValidQRCode(String qrCode) {
-    // Check if QR code matches expected patterns
     final validPatterns = [
-      RegExp(r'^bacia[1-3]_\d{3}$'),           // bacia1_001, bacia2_002, etc.
-      RegExp(r'^https://ecoar-beira\.app/'),   // Web URLs
-      RegExp(r'^ecoar://'),                    // Deep links
+      RegExp(r'^bacia[1-3]_\d{3}$'),
+      RegExp(r'^https://ecoar-beira\.app/'),
+      RegExp(r'^ecoar://'),
     ];
-
     return validPatterns.any((pattern) => pattern.hasMatch(qrCode));
   }
 
@@ -663,45 +782,15 @@ void _showPermissionDeniedDialog() {
           children: [
             Icon(Icons.check_circle, color: AppTheme.successGreen, size: 28),
             SizedBox(width: 12),
-            Text('Marcador Encontrado!'),
+            Text('Código QR Encontrado!'),
           ],
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppTheme.successGreen.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                children: [
-                  const Icon(
-                    Icons.view_in_ar,
-                    color: AppTheme.successGreen,
-                    size: 48,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Código: $qrCode',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 16,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Preparando experiência AR educativa...',
-                    style: TextStyle(
-                      color: AppTheme.textSecondary,
-                      fontSize: 14,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            ),
+            Text('Código: $qrCode'),
+            const SizedBox(height: 16),
+            const Text('Preparando experiência AR...'),
           ],
         ),
         actions: [
@@ -712,83 +801,12 @@ void _showPermissionDeniedDialog() {
             },
             child: const Text('Cancelar'),
           ),
-          ElevatedButton.icon(
+          ElevatedButton(
             onPressed: () {
               Navigator.of(context).pop();
               context.go('/ar/$qrCode');
             },
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('Iniciar AR'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primaryGreen,
-              foregroundColor: Colors.white,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showARCompatibilityDialog(ARCompatibilityResult result) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.warning_amber, color: AppTheme.warningOrange, size: 28),
-            SizedBox(width: 12),
-            Text('AR Não Disponível'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              result.reason,
-              style: const TextStyle(fontSize: 16),
-            ),
-            if (result.recommendations.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              const Text(
-                'Recomendações:',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                ),
-              ),
-              const SizedBox(height: 8),
-              ...result.recommendations.map((rec) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('• ', style: TextStyle(fontSize: 16)),
-                    Expanded(
-                      child: Text(rec, style: const TextStyle(fontSize: 14)),
-                    ),
-                  ],
-                ),
-              )),
-            ],
-          ],
-        ),
-        actions: [
-          if (result.canInstall)
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                context.go('/ar-compatibility');
-              },
-              child: const Text('Verificar Compatibilidade'),
-            ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              _resumeScanning();
-            },
-            child: const Text('Continuar Escaneando'),
+            child: const Text('Iniciar AR'),
           ),
         ],
       ),
@@ -799,31 +817,10 @@ void _showPermissionDeniedDialog() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.info, color: AppTheme.primaryBlue, size: 28),
-            SizedBox(width: 12),
-            Text('Código QR Inválido'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Código escaneado: $qrCode'),
-            const SizedBox(height: 12),
-            const Text(
-              'Este não é um marcador válido do EcoAR Beira. Procure por marcadores oficiais nos parques da cidade.',
-              style: TextStyle(fontSize: 14),
-            ),
-          ],
-        ),
+        title: const Text('Código QR Inválido'),
+        content: Text('Código: $qrCode\n\nEste não é um marcador válido do EcoAR Beira.'),
         actions: [
           TextButton(
-            onPressed: () => context.go('/map'),
-            child: const Text('Ver Mapa'),
-          ),
-          ElevatedButton(
             onPressed: () {
               Navigator.of(context).pop();
               _resumeScanning();
@@ -839,17 +836,10 @@ void _showPermissionDeniedDialog() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.error, color: AppTheme.errorRed, size: 28),
-            SizedBox(width: 12),
-            Text('Erro'),
-          ],
-        ),
+        title: const Text('Erro'),
         content: Text(message),
         actions: [
-          ElevatedButton(
+          TextButton(
             onPressed: () {
               Navigator.of(context).pop();
               _resumeScanning();
@@ -865,54 +855,27 @@ void _showPermissionDeniedDialog() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.help, color: AppTheme.primaryBlue, size: 28),
-            SizedBox(width: 12),
-            Text('Como Usar o Scanner'),
-          ],
-        ),
+        title: const Text('Como Usar o Scanner'),
         content: const SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                '📱 Como escanear:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
+              Text('📱 Como escanear:', style: TextStyle(fontWeight: FontWeight.bold)),
               SizedBox(height: 8),
               Text('• Posicione o código QR dentro da área verde'),
               Text('• Mantenha a câmera estável'),
               Text('• Certifique-se de ter boa iluminação'),
               SizedBox(height: 16),
-              Text(
-                '🗺️ Onde encontrar marcadores:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
+              Text('🗺️ Onde encontrar marcadores:', style: TextStyle(fontWeight: FontWeight.bold)),
               SizedBox(height: 8),
               Text('• Bacia 1: Biodiversidade'),
               Text('• Bacia 2: Recursos Hídricos'),
               Text('• Bacia 3: Agricultura Urbana'),
-              SizedBox(height: 16),
-              Text(
-                '🎯 O que você pode fazer:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              SizedBox(height: 8),
-              Text('• Explorar objetos 3D em AR'),
-              Text('• Ganhar pontos e badges'),
-              Text('• Aprender sobre sustentabilidade'),
-              Text('• Completar desafios educativos'),
             ],
           ),
         ),
         actions: [
           TextButton(
-            onPressed: () => context.go('/map'),
-            child: const Text('Ver Mapa'),
-          ),
-          ElevatedButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Entendi'),
           ),
@@ -936,10 +899,14 @@ void _showPermissionDeniedDialog() {
 
   void _toggleFlash() async {
     if (controller != null) {
-      await controller!.toggleFlash();
-      setState(() {
-        isFlashOn = !isFlashOn;
-      });
+      try {
+        await controller!.toggleFlash();
+        setState(() {
+          isFlashOn = !isFlashOn;
+        });
+      } catch (e) {
+        AppLogger.e('Erro ao alternar flash', e);
+      }
     }
   }
 
