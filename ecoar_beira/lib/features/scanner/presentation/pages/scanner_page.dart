@@ -32,6 +32,7 @@ class _ScannerPageState extends State<ScannerPage>
   @override
   void initState() {
     super.initState();
+    // WidgetsBinding.instance.addObserver(this);
     _setupAnimations();
     _checkCameraPermission();
   }
@@ -54,6 +55,14 @@ class _ScannerPageState extends State<ScannerPage>
     super.dispose();
   }
 
+  @override
+void didChangeAppLifecycleState(AppLifecycleState state) {
+  if (state == AppLifecycleState.resumed) {
+    // Verificar permissão novamente quando o app volta do background
+    _checkCameraPermission();
+  }
+}
+
   void _setupAnimations() {
     _animationController = AnimationController(
       duration: const Duration(seconds: 2),
@@ -74,19 +83,92 @@ class _ScannerPageState extends State<ScannerPage>
     _pulseController.repeat(reverse: true);
   }
 
-  Future<void> _checkCameraPermission() async {
-    final status = await Permission.camera.status;
-    if (status.isDenied || status.isPermanentlyDenied) {
+Future<void> _checkCameraPermission() async {
+  try {
+    final currentStatus = await Permission.camera.status;
+    
+    if (currentStatus.isGranted) {
+      setState(() {
+        hasPermission = true;
+      });
+      return;
+    }
+    
+    if (currentStatus.isDenied) {
+      // Solicita permissão pela primeira vez
       final result = await Permission.camera.request();
       setState(() {
         hasPermission = result.isGranted;
       });
-    } else {
-      setState(() {
-        hasPermission = true;
-      });
+      
+      if (result.isGranted) {
+        // Permissão concedida, reinicializar o QR View
+        Future.delayed(const Duration(milliseconds: 100), () {
+          setState(() {});
+        });
+      }
+    } else if (currentStatus.isPermanentlyDenied) {
+      // Mostrar diálogo para ir às configurações
+      _showPermissionDeniedDialog();
     }
+  } catch (e) {
+    print('Erro ao verificar permissão de câmera: $e');
+    // Tentar abrir as configurações como fallback
+    _showPermissionDeniedDialog();
   }
+}
+
+void _showPermissionDeniedDialog() {
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Row(
+        children: [
+          Icon(Icons.warning_amber, color: AppTheme.warningOrange, size: 28),
+          SizedBox(width: 12),
+          Text('Permissão Negada'),
+        ],
+      ),
+      content: const Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'A permissão de câmera foi negada permanentemente.',
+            style: TextStyle(fontSize: 16),
+          ),
+          SizedBox(height: 12),
+          Text(
+            'Para usar o scanner QR, você precisa:',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          SizedBox(height: 8),
+          Text('1. Ir para Configurações > Privacidade > Câmera'),
+          Text('2. Encontrar "Ecoar Beira" e ativar'),
+          Text('3. Voltar ao aplicativo'),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        ElevatedButton(
+          onPressed: () async {
+            Navigator.of(context).pop();
+            await openAppSettings();
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.primaryGreen,
+            foregroundColor: Colors.white,
+          ),
+          child: const Text('Abrir Configurações'),
+        ),
+      ],
+    ),
+  );
+}
 
   @override
   Widget build(BuildContext context) {
@@ -208,9 +290,11 @@ class _ScannerPageState extends State<ScannerPage>
         cutOutSize: 280,
       ),
       onPermissionSet: (ctrl, hasPermission) {
+        if (!hasPermission) {
         setState(() {
-          this.hasPermission = hasPermission;
+          this.hasPermission = false;
         });
+      }
       },
     );
   }
