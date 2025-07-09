@@ -36,7 +36,7 @@ class _ScannerPageState extends State<ScannerPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _setupAnimations();
-    _initializeCamera();
+    // _initializeCamera();
   }
 
   @override
@@ -69,7 +69,7 @@ class _ScannerPageState extends State<ScannerPage>
         if (hasPermission) {
           controller!.resumeCamera();
         } else {
-          _checkCameraPermission();
+          // _checkCameraPermission();
         }
         break;
       case AppLifecycleState.inactive:
@@ -108,7 +108,7 @@ class _ScannerPageState extends State<ScannerPage>
     AppLogger.i('Inicializando câmera...');
     
     try {
-      await _checkCameraPermission();
+      // await _checkCameraPermission();
       
       if (hasPermission) {
         setState(() {

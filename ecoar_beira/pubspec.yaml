@@ -19,7 +19,6 @@ dependencies:
   # AR & Camera - APENAS AR_FLUTTER_PLUGIN
   ar_flutter_plugin: ^0.7.3  # Suporta Android e iOS
   camera: ^0.10.5
-  qr_code_scanner: ^1.0.1
   qr_flutter: ^4.1.0
 
   # Location & Maps
@@ -56,6 +55,7 @@ dependencies:
   device_info_plus: ^11.5.0
   vector_math: ^2.1.4
   get_it: ^8.0.3
+  qr_code_scanner: ^1.0.1
 
 dev_dependencies:
   flutter_test:
