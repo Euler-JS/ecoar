@@ -49,7 +49,7 @@ dependencies:
 
   # Audio
   audioplayers: ^5.2.1
-  arcore_flutter_plugin: ^0.0.9
+  arcore_flutter_plugin: ^0.1.0
   flutter_3d_controller: ^2.2.0
   model_viewer_plus: ^1.9.3
   sensors_plus: ^6.1.1
