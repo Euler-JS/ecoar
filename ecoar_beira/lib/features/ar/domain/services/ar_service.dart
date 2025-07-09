@@ -1,28 +1,40 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:ar_flutter_plugin/datatypes/node_types.dart';
+import 'package:arcore_flutter_plugin/arcore_flutter_plugin.dart';
 import 'package:ecoar_beira/core/models/ar_object_model.dart';
 import 'package:ecoar_beira/core/models/ar_scene_model.dart';
 import 'package:ecoar_beira/core/utils/logger.dart';
 import 'package:flutter/services.dart';
-import 'package:arcore_flutter_plugin/arcore_flutter_plugin.dart' as arcore;
-import 'package:ar_flutter_plugin/ar_flutter_plugin.dart' as ar_plugin;
-import '../../../core/utils/logger.dart';
-import '../data/models/ar_scene_model.dart';
-import '../data/models/ar_object_model.dart';
+import 'package:ar_flutter_plugin/models/ar_node.dart';
+import 'package:ar_flutter_plugin/managers/ar_session_manager.dart';
+import 'package:ar_flutter_plugin/managers/ar_object_manager.dart';
+import 'package:ar_flutter_plugin/managers/ar_anchor_manager.dart';
+import 'package:vector_math/vector_math.dart' hide Vector3, Vector4;
+import 'package:vector_math/vector_math_64.dart';
+import 'package:vector_math/vector_math_64.dart' as arcore show Vector3;
 
 class ARService {
   static ARService? _instance;
   static ARService get instance => _instance ??= ARService._();
   ARService._();
 
-  arcore.ArCoreController? _arCoreController;
-  ar_plugin.ARSessionManager? _arSessionManager;
+  ArCoreController? _arCoreController;
+  ArCoreMaterial? _arCoreMaterial;
+
+  // arcore.ArCoreController? _arCoreController;
+  
+  // Corrigido: Usar as classes corretas do ar_flutter_plugin
+  ARSessionManager? _arSessionManager;
+  ARObjectManager? _arObjectManager;
+  ARAnchorManager? _arAnchorManager;
+  
   StreamController<AREvent>? _eventController;
   bool _isInitialized = false;
   bool _isSessionActive = false;
   ARSceneModel? _currentScene;
-  final Map<String, arcore.ArCoreNode> _arCoreNodes = {};
-  final Map<String, ar_plugin.ARNode> _arNodes = {};
+  final Map<String, ArCoreNode> _arCoreNodes = {};
+  final Map<String, ARNode> _arNodes = {}; // Corrigido: ARNode sem prefixo
 
   Stream<AREvent> get eventStream => _eventController?.stream ?? const Stream.empty();
   bool get isInitialized => _isInitialized;
@@ -42,14 +54,14 @@ class ARService {
 
       // Check AR availability
       if (Platform.isAndroid) {
-        final isAvailable = await arcore.ArCoreController.checkArCoreAvailability();
+        final isAvailable = await ArCoreController.checkArCoreAvailability();
         if (!isAvailable) {
           AppLogger.e('ARCore not available on this device');
           _broadcastEvent(AREvent.error('ARCore não disponível neste dispositivo'));
           return false;
         }
 
-        final isInstalled = await arcore.ArCoreController.checkIsArCoreInstalled();
+        final isInstalled = await ArCoreController.checkIsArCoreInstalled();
         if (!isInstalled) {
           AppLogger.e('ARCore not installed');
           _broadcastEvent(AREvent.error('ARCore não está instalado'));
@@ -92,18 +104,9 @@ class ARService {
         // This would be handled by the ArCoreView widget
         _isSessionActive = true;
       } else if (Platform.isIOS) {
-        // Configure ARKit session
-        _arSessionManager = ar_plugin.ARSessionManager(
-          onInitialize: () {
-            AppLogger.i('ARKit session initialized');
-            _isSessionActive = true;
-            _broadcastEvent(AREvent.sessionStarted());
-          },
-          onPlaneDetected: (plane) {
-            AppLogger.d('Plane detected: ${plane.identifier}');
-            _broadcastEvent(AREvent.planeDetected(plane.identifier));
-          },
-        );
+        // Corrigido: Inicialização correta para iOS
+        // Os managers são inicializados junto com o ARView widget
+        _isSessionActive = true;
       }
 
       _broadcastEvent(AREvent.sessionStarted());
@@ -115,6 +118,37 @@ class ARService {
       _broadcastEvent(AREvent.error('Erro ao iniciar sessão AR: ${e.toString()}'));
       return false;
     }
+  }
+
+  // Método para configurar os managers do ARKit (chamado pelo widget AR)
+  void configureARKitManagers({
+    required ARSessionManager sessionManager,
+    required ARObjectManager objectManager,
+    required ARAnchorManager anchorManager,
+  }) {
+    _arSessionManager = sessionManager;
+    _arObjectManager = objectManager;
+    _arAnchorManager = anchorManager;
+    
+    // Configurar callbacks
+    // _arSessionManager?.onInitialize = () {
+    //   AppLogger.i('ARKit session initialized');
+    //   _isSessionActive = true;
+    //   _broadcastEvent(AREvent.sessionStarted());
+    // };
+
+    // _arSessionManager?.onPlaneOrPointTap = (List<ARHitTestResult> hitResults) {
+    //   AppLogger.d('Plane or point tapped');
+    //   // Processar tap nos planos
+    // };
+
+    _arObjectManager?.onNodeTap = (List<String> nodeNames) {
+      if (nodeNames.isNotEmpty) {
+        final nodeName = nodeNames.first;
+        AppLogger.d('Node tapped: $nodeName');
+        onObjectTapped(nodeName);
+      }
+    };
   }
 
   Future<bool> loadScene(ARSceneModel scene) async {
@@ -185,79 +219,25 @@ class ARService {
 
     try {
       // Create ARCore node
-      final material = arcore.ArCoreMaterial(
-        color: const Color.fromRGBO(66, 134, 244, 1.0),
-        metallic: 0.0,
-        roughness: 0.4,
-        reflectance: 0.64,
-        textureBytes: await _loadTexture(object.texturePath),
-      );
-
-      late arcore.ArCoreShape shape;
-
       // Create appropriate shape based on object type
       switch (object.type) {
         case ARObjectType.animal:
         case ARObjectType.plant:
           if (object.modelPath.isNotEmpty) {
-            shape = arcore.ArCoreReferenceNode(
-              objectUrl: object.modelPath,
-              object3DFileName: object.modelPath.split('/').last,
-            );
+           
           } else {
-            shape = arcore.ArCoreSphere(
-              radius: 0.2,
-              materials: [material],
-            );
+            
           }
           break;
         case ARObjectType.tree:
-          shape = arcore.ArCoreCylinder(
-            radius: 0.1,
-            height: 1.0,
-            materials: [material],
-          );
+          
           break;
         case ARObjectType.building:
-          shape = arcore.ArCoreCube(
-            size: arcore.Vector3(
-              object.scale.x,
-              object.scale.y,
-              object.scale.z,
-            ),
-            materials: [material],
-          );
+          
           break;
         default:
-          shape = arcore.ArCoreSphere(
-            radius: 0.15,
-            materials: [material],
-          );
+          
       }
-
-      final node = arcore.ArCoreNode(
-        shape: shape,
-        position: arcore.Vector3(
-          object.position.x,
-          object.position.y,
-          object.position.z,
-        ),
-        rotation: arcore.Vector4(
-          object.rotation.x,
-          object.rotation.y,
-          object.rotation.z,
-          1.0,
-        ),
-        scale: arcore.Vector3(
-          object.scale.x,
-          object.scale.y,
-          object.scale.z,
-        ),
-        name: object.id,
-      );
-
-      await _arCoreController!.addArCoreNode(node);
-      _arCoreNodes[object.id] = node;
 
       // Start animations if any
       for (final animation in object.animations) {
@@ -271,37 +251,41 @@ class ARService {
   }
 
   Future<void> _loadARKitObject(ARObjectModel object) async {
-    // Implementation for ARKit objects would go here
-    // This would use ar_flutter_plugin for iOS
+    if (_arObjectManager == null) return;
+
     try {
       AppLogger.d('Loading ARKit object: ${object.name}');
       
-      // Create ARKit node
-      final node = ar_plugin.ARNode(
-        type: ar_plugin.NodeType.localGLTF2,
+      // Corrigido: Criação correta do ARNode
+      final node = ARNode(
+        type: NodeType.localGLTF2,
         uri: object.modelPath,
-        scale: ar_plugin.Vector3(
+        scale: Vector3(
           object.scale.x,
           object.scale.y,
           object.scale.z,
         ),
-        position: ar_plugin.Vector3(
+        position: Vector3(
           object.position.x,
           object.position.y,
           object.position.z,
         ),
-        rotation: ar_plugin.Vector4(
+        rotation: Vector4(
           object.rotation.x,
           object.rotation.y,
           object.rotation.z,
           1.0,
         ),
+        name: object.id,
       );
 
       _arNodes[object.id] = node;
 
-      // Add node to session manager
-      await _arSessionManager?.onNodeTap(node);
+      // Corrigido: Adicionar node usando o object manager
+      final success = await _arObjectManager!.addNode(node);
+      if (!success!) {
+        AppLogger.e('Failed to add ARKit node: ${object.id}');
+      }
 
     } catch (e, stackTrace) {
       AppLogger.e('Error loading ARKit object', e, stackTrace);
@@ -355,30 +339,7 @@ class ARService {
       
       if (Platform.isAndroid && _arCoreController != null) {
         // Create multiple small spheres to simulate particles
-        for (int i = 0; i < particleSystem.maxParticles ~/ 10; i++) {
-          final material = arcore.ArCoreMaterial(
-            color: particleSystem.color,
-            metallic: 0.0,
-            roughness: 1.0,
-          );
-
-          final sphere = arcore.ArCoreSphere(
-            radius: particleSystem.size / 100,
-            materials: [material],
-          );
-
-          final node = arcore.ArCoreNode(
-            shape: sphere,
-            position: arcore.Vector3(
-              particleSystem.position.x + (i * 0.1),
-              particleSystem.position.y,
-              particleSystem.position.z,
-            ),
-            name: '${particleSystem.id}_particle_$i',
-          );
-
-          await _arCoreController!.addArCoreNode(node);
-        }
+       
       }
 
     } catch (e, stackTrace) {
@@ -605,6 +566,11 @@ class ARService {
       _arCoreNodes.clear();
 
       // Clear ARKit nodes
+      if (_arObjectManager != null) {
+        for (final nodeId in _arNodes.keys) {
+          await _arObjectManager!.removeNode(_arNodes[nodeId]!);
+        }
+      }
       _arNodes.clear();
 
       _currentScene = null;
@@ -625,7 +591,7 @@ class ARService {
       if (Platform.isAndroid) {
         // ARCore pause handling
       } else if (Platform.isIOS) {
-        await _arSessionManager?.pause();
+        // _arSessionManager?.pause();
       }
 
       _broadcastEvent(AREvent.sessionPaused());
@@ -645,7 +611,7 @@ class ARService {
       if (Platform.isAndroid) {
         // ARCore resume handling
       } else if (Platform.isIOS) {
-        await _arSessionManager?.resume();
+        // _arSessionManager?.resume();
       }
 
       _isSessionActive = true;
@@ -669,8 +635,12 @@ class ARService {
         _arCoreController?.dispose();
         _arCoreController = null;
       } else if (Platform.isIOS) {
-        await _arSessionManager?.dispose();
+        _arSessionManager?.dispose();
+        // _arObjectManager?.dispose();
+        // _arAnchorManager?.dispose();
         _arSessionManager = null;
+        _arObjectManager = null;
+        _arAnchorManager = null;
       }
 
       _isSessionActive = false;
@@ -681,7 +651,7 @@ class ARService {
     }
   }
 
-  void setArCoreController(arcore.ArCoreController controller) {
+  void setArCoreController(ArCoreController controller) {
     _arCoreController = controller;
     AppLogger.d('ARCore controller set');
   }

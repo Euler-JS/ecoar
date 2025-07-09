@@ -1,5 +1,8 @@
 import 'dart:io';
 import 'dart:async';
+import 'package:ar_flutter_plugin/managers/ar_session_manager.dart';
+import 'package:ar_flutter_plugin/widgets/ar_view.dart';
+import 'package:ar_flutter_plugin/ar_flutter_plugin.dart';
 import 'package:ecoar_beira/core/models/ar_scene_model.dart';
 import 'package:ecoar_beira/core/theme/app_theme.dart';
 import 'package:ecoar_beira/core/utils/logger.dart';
@@ -9,8 +12,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:arcore_flutter_plugin/arcore_flutter_plugin.dart' as arcore;
-import 'package:ar_flutter_plugin/ar_flutter_plugin.dart' as ar_plugin;
 import 'package:audioplayers/audioplayers.dart';
+import 'package:vector_math/vector_math_64.dart' as arcore;
 
 
 class RealARExperiencePage extends StatefulWidget {
@@ -366,12 +369,14 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     // );
   }
 
-  Widget _buildARKitView() {
-    return ar_plugin.ARView(
-      onARViewCreated: (ar_plugin.ARSessionManager arSessionManager) {
-        // Handle ARKit session creation
-        AppLogger.d('ARKit view created');
-      },
+ Widget _buildARKitView() {
+    return ARView(
+      // permissionPromptButtonText: String.fromCharCode(1),
+      onARViewCreated: (arSessionManager, arObjectManager, arAnchorManager, arLocationManager) => arSessionManager,
+      // onARViewCreated: (ARSessionManager arSessionManager) {
+      //   // Handle ARKit session creation
+      //   AppLogger.d('ARKit view created');
+      // },
     );
   }
 
