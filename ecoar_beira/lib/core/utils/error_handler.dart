@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:ecoar_beira/core/config/app_config.dart';
 import 'logger.dart';
 
 class ErrorHandler {
