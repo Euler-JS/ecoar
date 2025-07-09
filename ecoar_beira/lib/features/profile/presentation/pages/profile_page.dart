@@ -657,12 +657,12 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   void _showAllBadges() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => AllBadgesPage(badges: _badges),
-      ),
-    );
+    // Navigator.push(
+    //   context,
+    //   MaterialPageRoute(
+    //     builder: (context) => AllBadgesPage(badges: _badges),
+    //   ),
+    // );
   }
 
   void _showBadgeDetails(Map<String, dynamic> badge) {

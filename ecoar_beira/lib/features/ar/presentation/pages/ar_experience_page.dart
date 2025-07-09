@@ -56,7 +56,7 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
   @override
   void initState() {
     super.initState();
-    WidgetsBindingObserver.instance.addObserver(this);
+   WidgetsBinding.instance.addObserver(this);
     
     // Lock orientation for AR
     SystemChrome.setPreferredOrientations([
@@ -70,7 +70,7 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
 
   @override
   void dispose() {
-    WidgetsBindingObserver.instance.removeObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
     
     // Restore orientation
     SystemChrome.setPreferredOrientations([
@@ -334,7 +334,12 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
   }
 
   Widget _buildARCoreView() {
-    return arcore.ArCoreView(
+    return GestureDetector(
+    onTap: () {
+      // Handle tap events here
+      _handleARCoreTap([]);
+    },
+    child: arcore.ArCoreView(
       onArCoreViewCreated: (arcore.ArCoreController controller) {
         _arService.setArCoreController(controller);
         AppLogger.d('ARCore view created');
@@ -342,13 +347,23 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
       enableTapRecognizer: true,
       enablePlaneRenderer: true,
       enableUpdateListener: true,
-      onTap: (hits) {
-        _handleARCoreTap(hits);
-      },
-      onPlaneDetected: (plane) {
-        AppLogger.d('Plane detected in ARCore');
-      },
-    );
+    ),
+  );
+    // return arcore.ArCoreView(
+    //   onArCoreViewCreated: (arcore.ArCoreController controller) {
+    //     _arService.setArCoreController(controller);
+    //     AppLogger.d('ARCore view created');
+    //   },
+    //   enableTapRecognizer: true,
+    //   enablePlaneRenderer: true,
+    //   enableUpdateListener: true,
+    //   // onTap: (hits) {
+    //   //   _handleARCoreTap(hits);
+    //   // },
+    //   // onPlaneDetected: (plane) {
+    //   //   AppLogger.d('Plane detected in ARCore');
+    //   // },
+    // );
   }
 
   Widget _buildARKitView() {
