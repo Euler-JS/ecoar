@@ -9,7 +9,7 @@ import AVFoundation
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    GMSServices.provideAPIKey("AIzaSyCc_QAuSZWSS63Ep3wDqd1MNC1SFIeeTK4")
+    GMSServices.provideAPIKey("YOUR_GOOGLE_MAPS_API_KEY")
     GeneratedPluginRegistrant.register(with: self)
 
     // Dica: só chame essa função quando for necessário
