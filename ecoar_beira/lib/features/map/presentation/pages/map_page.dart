@@ -1,6 +1,7 @@
 // lib/features/map/presentation/pages/map_page.dart
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ecoar_beira/core/theme/app_theme.dart';
@@ -13,7 +14,7 @@ class MapPage extends StatefulWidget {
 }
 
 class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
-  GoogleMapController? _mapController;
+  final MapController _mapController = MapController();
   
   // Beira, Mozambique coordinates
   static const LatLng _beiraCenter = LatLng(-19.8437, 34.8389);
@@ -26,7 +27,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   String _selectedFilter = 'todos';
   
   // Mock markers data
-  final Set<Marker> _markers = {};
   final List<MarkerData> _markerData = [
     // Bacia 1 - Biodiversidade
     MarkerData(
@@ -136,7 +136,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       CurvedAnimation(parent: _fabAnimationController, curve: Curves.elasticOut),
     );
     _fabAnimationController.forward();
-    _createMarkers();
     _getCurrentLocation();
   }
 
@@ -146,44 +145,43 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  void _createMarkers() {
-    _markers.clear();
-    for (var markerData in _markerData) {
-      if (_selectedFilter == 'todos' || _getFilterType(markerData.type) == _selectedFilter) {
-        _markers.add(
-          Marker(
-            markerId: MarkerId(markerData.id),
-            position: markerData.position,
-            icon: _getMarkerIcon(markerData.type, markerData.isVisited),
-            infoWindow: InfoWindow(
-              title: markerData.title,
-              snippet: '${markerData.points} pontos • ${markerData.challenges} desafios',
-              onTap: () => _showMarkerDetails(markerData),
+  List<Marker> _getFilteredMarkers() {
+    final filteredData = _markerData.where((markerData) {
+      return _selectedFilter == 'todos' || 
+             _getFilterType(markerData.type) == _selectedFilter;
+    }).toList();
+
+    return filteredData.map((markerData) {
+      return Marker(
+        point: markerData.position,
+        width: 40,
+        height: 40,
+        child: GestureDetector(
+          onTap: () => _showMarkerDetails(markerData),
+          child: Container(
+            decoration: BoxDecoration(
+              color: markerData.isVisited 
+                  ? AppTheme.successGreen 
+                  : _getTypeColor(markerData.type),
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
-            onTap: () => _showMarkerDetails(markerData),
+            child: Icon(
+              _getTypeIcon(markerData.type),
+              color: Colors.white,
+              size: 20,
+            ),
           ),
-        );
-      }
-    }
-    setState(() {});
-  }
-
-  BitmapDescriptor _getMarkerIcon(MarkerType type, bool isVisited) {
-    // In a real app, you would load custom icons
-    return isVisited 
-        ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)
-        : BitmapDescriptor.defaultMarkerWithHue(_getMarkerHue(type));
-  }
-
-  double _getMarkerHue(MarkerType type) {
-    switch (type) {
-      case MarkerType.biodiversidade:
-        return BitmapDescriptor.hueGreen;
-      case MarkerType.recursosHidricos:
-        return BitmapDescriptor.hueBlue;
-      case MarkerType.agriculturaUrbana:
-        return BitmapDescriptor.hueOrange;
-    }
+        ),
+      );
+    }).toList();
   }
 
   String _getFilterType(MarkerType type) {
@@ -220,13 +218,12 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
 
       _currentPosition = await Geolocator.getCurrentPosition();
       
-      if (_mapController != null) {
-        _mapController!.animateCamera(
-          CameraUpdate.newLatLng(
-            LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-          ),
-        );
-      }
+      // Mover o mapa para a localização atual
+      _mapController.move(
+        LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+        15.0,
+      );
+      
     } catch (e) {
       _showLocationErrorSnackBar();
     } finally {
@@ -251,20 +248,52 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       ),
       body: Stack(
         children: [
-          // Google Map
-          GoogleMap(
-            initialCameraPosition: const CameraPosition(
-              target: _beiraCenter,
+          // Flutter Map com OpenStreetMap
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              center: _beiraCenter,
               zoom: 14.0,
+              maxZoom: 18.0,
+              minZoom: 10.0,
             ),
-            markers: _markers,
-            onMapCreated: (GoogleMapController controller) {
-              _mapController = controller;
-            },
-            myLocationEnabled: true,
-            myLocationButtonEnabled: false,
-            mapType: MapType.normal,
-            zoomControlsEnabled: false,
+            children: [
+              // Tile Layer (OpenStreetMap)
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.example.ecoar_beira',
+                maxZoom: 18,
+              ),
+              
+              // Markers Layer
+              MarkerLayer(
+                markers: _getFilteredMarkers(),
+              ),
+              
+              // Current Location Marker
+              if (_currentPosition != null)
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+                      width: 20,
+                      height: 20,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryBlue,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                        child: const Icon(
+                          Icons.person,
+                          color: Colors.white,
+                          size: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+            ],
           ),
           
           // Filter Chips
@@ -354,7 +383,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         setState(() {
           _selectedFilter = value;
         });
-        _createMarkers();
       },
       backgroundColor: Colors.white,
       selectedColor: AppTheme.primaryGreen,
@@ -715,11 +743,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   }
 
   void _navigateToMarker(LatLng position) {
-    _mapController?.animateCamera(
-      CameraUpdate.newCameraPosition(
-        CameraPosition(target: position, zoom: 18.0),
-      ),
-    );
+    _mapController.move(position, 18.0);
   }
 
   void _showMapLegend() {
@@ -735,7 +759,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
             _buildLegendItem(Icons.agriculture, 'Agricultura Urbana', AppTheme.warningOrange),
             const SizedBox(height: 16),
             const Text(
-              'Marcadores verdes indicam locais já visitados.',
+              'Marcadores com borda verde indicam locais já visitados.',
               style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
             ),
           ],

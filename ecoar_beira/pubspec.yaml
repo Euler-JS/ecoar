@@ -26,6 +26,10 @@ dependencies:
   google_maps_flutter: ^2.5.0
   permission_handler: ^10.1.0
 
+   # Maps - GRATUITO (OpenStreetMap)
+  flutter_map: ^6.1.0
+  latlong2: ^0.9.1
+
   # Local Storage
   hive: ^2.2.3
   hive_flutter: ^1.1.0
