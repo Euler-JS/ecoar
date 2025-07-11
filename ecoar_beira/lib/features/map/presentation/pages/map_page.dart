@@ -1,4 +1,6 @@
 // lib/features/map/presentation/pages/map_page.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -136,13 +138,21 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       CurvedAnimation(parent: _fabAnimationController, curve: Curves.elasticOut),
     );
     _fabAnimationController.forward();
-    _getCurrentLocation();
+    
+    // Inicializar localização com delay para evitar problemas de build
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeLocation();
+    });
   }
 
   @override
   void dispose() {
     _fabAnimationController.dispose();
     super.dispose();
+  }
+
+  Future<void> _initializeLocation() async {
+    await _getCurrentLocation();
   }
 
   List<Marker> _getFilteredMarkers() {
@@ -196,17 +206,21 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   }
 
   Future<void> _getCurrentLocation() async {
+    if (_isLoadingLocation) return;
+    
     setState(() {
       _isLoadingLocation = true;
     });
 
     try {
+      // Verificar se os serviços de localização estão habilitados
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
         _showLocationServiceDialog();
         return;
       }
 
+      // Verificar permissões
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
@@ -216,20 +230,46 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         }
       }
 
-      _currentPosition = await Geolocator.getCurrentPosition();
-      
-      // Mover o mapa para a localização atual
-      _mapController.move(
-        LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-        15.0,
+      if (permission == LocationPermission.deniedForever) {
+        _showPermissionDeniedForeverDialog();
+        return;
+      }
+
+      // Obter posição atual com configurações específicas
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
       );
+
+      if (mounted) {
+        setState(() {
+          _currentPosition = position;
+        });
+
+        // Mover o mapa para a localização atual
+        _mapController.move(
+          LatLng(position.latitude, position.longitude),
+          15.0,
+        );
+        
+        _showLocationSuccessSnackBar();
+      }
       
+    } on LocationServiceDisabledException {
+      _showLocationServiceDialog();
+    } on PermissionDeniedException {
+      _showPermissionDeniedSnackBar();
+    } on TimeoutException {
+      _showLocationTimeoutSnackBar();
     } catch (e) {
-      _showLocationErrorSnackBar();
+      debugPrint('Erro ao obter localização: $e');
+      _showLocationErrorSnackBar(e.toString());
     } finally {
-      setState(() {
-        _isLoadingLocation = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoadingLocation = false;
+        });
+      }
     }
   }
 
@@ -792,11 +832,41 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Serviços de Localização'),
-        content: const Text('Por favor, habilite os serviços de localização para usar esta funcionalidade.'),
+        content: const Text('Os serviços de localização estão desabilitados. Por favor, habilite-os nas configurações do dispositivo.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              await Geolocator.openLocationSettings();
+            },
+            child: const Text('Abrir Configurações'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPermissionDeniedForeverDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Permissão Negada'),
+        content: const Text('A permissão de localização foi negada permanentemente. Por favor, habilite-a nas configurações do aplicativo.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              await Geolocator.openAppSettings();
+            },
+            child: const Text('Abrir Configurações'),
           ),
         ],
       ),
@@ -812,11 +882,50 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     );
   }
 
-  void _showLocationErrorSnackBar() {
+  void _showLocationSuccessSnackBar() {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Erro ao obter localização'),
+        content: Text('Localização obtida com sucesso'),
+        backgroundColor: AppTheme.successGreen,
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _showLocationTimeoutSnackBar() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Tempo limite esgotado. Tente novamente.'),
         backgroundColor: AppTheme.errorRed,
+        action: SnackBarAction(
+          label: 'Tentar novamente',
+          onPressed: _getCurrentLocation,
+        ),
+      ),
+    );
+    // ScaffoldMessenger.of(context).showSnackBar(
+    //   const SnackBar(
+    //     content: Text('Tempo limite esgotado. Tente novamente.'),
+    //     backgroundColor: AppTheme.warningOrange,
+    //     action: SnackBarAction(
+    //       label: 'Tentar novamente',
+    //       // onPressed: () {
+    //       //   _getCurrentLocation();
+    //       // },
+    //     ),
+    //   ),
+    // );
+  }
+
+  void _showLocationErrorSnackBar(String error) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Erro ao obter localização: $error'),
+        backgroundColor: AppTheme.errorRed,
+        action: SnackBarAction(
+          label: 'Tentar novamente',
+          onPressed: _getCurrentLocation,
+        ),
       ),
     );
   }
