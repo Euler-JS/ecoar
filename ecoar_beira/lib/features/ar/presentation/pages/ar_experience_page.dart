@@ -1,20 +1,20 @@
-import 'dart:io';
 import 'dart:async';
-import 'package:ar_flutter_plugin/managers/ar_session_manager.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:ar_flutter_plugin/widgets/ar_view.dart';
-import 'package:ar_flutter_plugin/ar_flutter_plugin.dart';
+import 'package:ar_flutter_plugin/managers/ar_session_manager.dart';
+import 'package:ar_flutter_plugin/managers/ar_object_manager.dart';
+import 'package:ar_flutter_plugin/managers/ar_anchor_manager.dart';
+import 'package:ar_flutter_plugin/managers/ar_location_manager.dart';
+import 'package:ar_flutter_plugin/datatypes/config_planedetection.dart';
+import 'package:ar_flutter_plugin/datatypes/hittest_result_types.dart';
 import 'package:ecoar_beira/core/models/ar_scene_model.dart';
 import 'package:ecoar_beira/core/theme/app_theme.dart';
 import 'package:ecoar_beira/core/utils/logger.dart';
 import 'package:ecoar_beira/features/ar/data/repositories/ar_scene_repository.dart';
 import 'package:ecoar_beira/features/ar/domain/services/ar_service.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:go_router/go_router.dart';
-import 'package:arcore_flutter_plugin/arcore_flutter_plugin.dart' as arcore;
-import 'package:audioplayers/audioplayers.dart';
-import 'package:vector_math/vector_math_64.dart' as arcore;
-
 
 class RealARExperiencePage extends StatefulWidget {
   final String markerId;
@@ -31,9 +31,15 @@ class RealARExperiencePage extends StatefulWidget {
 class _RealARExperiencePageState extends State<RealARExperiencePage>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   
-  // AR Service
+  // Services
   final ARService _arService = ARService.instance;
   final ARSceneRepository _sceneRepository = ARSceneRepository();
+  
+  // AR Managers - unificados para ambas as plataformas
+  ARSessionManager? _arSessionManager;
+  ARObjectManager? _arObjectManager;
+  ARAnchorManager? _arAnchorManager;
+  ARLocationManager? _arLocationManager;
   
   // Controllers
   late AnimationController _loadingController;
@@ -59,7 +65,7 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
   @override
   void initState() {
     super.initState();
-   WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     
     // Lock orientation for AR
     SystemChrome.setPreferredOrientations([
@@ -122,18 +128,6 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
         return;
       }
 
-      // Start AR session
-      final sessionStarted = await _arService.startSession(
-        enablePlaneDetection: true,
-        enableLightEstimation: true,
-        enableImageTracking: false,
-      );
-      
-      if (!sessionStarted) {
-        _showError('Falha ao iniciar sessão AR');
-        return;
-      }
-
       // Load scene for this marker
       await _loadScene();
 
@@ -162,8 +156,6 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
       }
 
       _currentScene = scene;
-      await _arService.loadScene(scene);
-
       AppLogger.i('Scene loaded: ${scene.name}');
 
     } catch (e, stackTrace) {
@@ -179,6 +171,8 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
   }
 
   void _handleAREvent(AREvent event) {
+    if (!mounted) return;
+
     switch (event.runtimeType) {
       case ARObjectTappedEvent:
         final e = event as ARObjectTappedEvent;
@@ -217,7 +211,6 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
   }
 
   void _showTapFeedback() {
-    // Show visual feedback for tap
     HapticFeedback.lightImpact();
     
     ScaffoldMessenger.of(context).showSnackBar(
@@ -244,8 +237,6 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
 
   void _playSound(String soundId) async {
     try {
-      // Play sound based on soundId
-      // This would map to actual audio files
       await _audioPlayer.play(AssetSource('audio/$soundId.mp3'));
     } catch (e) {
       AppLogger.e('Error playing sound: $soundId', e);
@@ -307,7 +298,7 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     return Scaffold(
       body: Stack(
         children: [
-          // AR View
+          // AR View - unificado para ambas as plataformas
           _buildARView(),
           
           // Loading overlay
@@ -327,89 +318,60 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
   }
 
   Widget _buildARView() {
-    if (Platform.isAndroid) {
-      return _buildARCoreView();
-    } else if (Platform.isIOS) {
-      return _buildARKitView();
-    } else {
-      return _buildUnsupportedPlatform();
-    }
-  }
-
-  Widget _buildARCoreView() {
-    return GestureDetector(
-    onTap: () {
-      // Handle tap events here
-      _handleARCoreTap([]);
-    },
-    child: arcore.ArCoreView(
-      onArCoreViewCreated: (arcore.ArCoreController controller) {
-        _arService.setArCoreController(controller);
-        AppLogger.d('ARCore view created');
-      },
-      enableTapRecognizer: true,
-      enablePlaneRenderer: true,
-      enableUpdateListener: true,
-    ),
-  );
-    // return arcore.ArCoreView(
-    //   onArCoreViewCreated: (arcore.ArCoreController controller) {
-    //     _arService.setArCoreController(controller);
-    //     AppLogger.d('ARCore view created');
-    //   },
-    //   enableTapRecognizer: true,
-    //   enablePlaneRenderer: true,
-    //   enableUpdateListener: true,
-    //   // onTap: (hits) {
-    //   //   _handleARCoreTap(hits);
-    //   // },
-    //   // onPlaneDetected: (plane) {
-    //   //   AppLogger.d('Plane detected in ARCore');
-    //   // },
-    // );
-  }
-
- Widget _buildARKitView() {
     return ARView(
-      // permissionPromptButtonText: String.fromCharCode(1),
-      onARViewCreated: (arSessionManager, arObjectManager, arAnchorManager, arLocationManager) => arSessionManager,
-      // onARViewCreated: (ARSessionManager arSessionManager) {
-      //   // Handle ARKit session creation
-      //   AppLogger.d('ARKit view created');
-      // },
+      onARViewCreated: _onARViewCreated,
+      planeDetectionConfig: PlaneDetectionConfig.horizontalAndVertical,
     );
   }
 
-  Widget _buildUnsupportedPlatform() {
-    return Container(
-      color: Colors.black,
-      child: const Center(
-        child: Text(
-          'AR não suportado nesta plataforma',
-          style: TextStyle(color: Colors.white, fontSize: 18),
-        ),
-      ),
+  void _onARViewCreated(
+    ARSessionManager arSessionManager,
+    ARObjectManager arObjectManager,
+    ARAnchorManager arAnchorManager,
+    ARLocationManager arLocationManager,
+  ) {
+    _arSessionManager = arSessionManager;
+    _arObjectManager = arObjectManager;
+    _arAnchorManager = arAnchorManager;
+    _arLocationManager = arLocationManager;
+
+    // Configure the AR service with these managers
+    _arService.configureManagers(
+      sessionManager: arSessionManager,
+      objectManager: arObjectManager,
+      anchorManager: arAnchorManager,
+      locationManager: arLocationManager,
     );
+
+    // Start AR session and load scene
+    _startARSession();
   }
 
-  void _handleARCoreTap(List<arcore.ArCoreHitTestResult> hits) {
-    if (hits.isNotEmpty) {
-      final hit = hits.first;
+  Future<void> _startARSession() async {
+    try {
+      // Start AR session
+      final sessionStarted = await _arService.startSession(
+        enablePlaneDetection: true,
+        enableLightEstimation: true,
+        enableImageTracking: false,
+      );
       
-      // Find which object was tapped
-      final objectId = _findObjectAtPosition(hit.pose.translation);
-      if (objectId != null) {
-        _arService.onObjectTapped(objectId);
+      if (!sessionStarted) {
+        _showError('Falha ao iniciar sessão AR');
+        return;
       }
-    }
-    
-    _resetUITimer();
-  }
 
-  String? _findObjectAtPosition(arcore.Vector3 position) {
-    // This would implement collision detection logic
-    // For now, return a mock object ID
-    return 'tree_001';
+      // Load the scene
+      if (_currentScene != null) {
+        await _arService.loadScene(_currentScene!);
+      }
+
+      AppLogger.i('AR session started and scene loaded');
+
+    } catch (e, stackTrace) {
+      AppLogger.e('Error starting AR session', e, stackTrace);
+      _showError('Erro ao inicializar experiência AR');
+    }
   }
 
   Widget _buildLoadingOverlay() {
@@ -722,7 +684,6 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
       AppLogger.d('Taking AR photo');
       HapticFeedback.mediumImpact();
       
-      // Implement AR photo capture
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Foto AR capturada!'),
@@ -757,7 +718,9 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
       });
       
       await _arService.clearScene();
-      await _loadScene();
+      if (_currentScene != null) {
+        await _arService.loadScene(_currentScene!);
+      }
       
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -810,7 +773,7 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
   }
 }
 
-// Supporting widgets
+// Supporting widgets remain the same
 class PointsEarnedDialog extends StatefulWidget {
   final int points;
   

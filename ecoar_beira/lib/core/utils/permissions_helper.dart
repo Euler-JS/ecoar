@@ -4,10 +4,23 @@ import 'logger.dart';
 
 class PermissionsHelper {
   
+  /// Verifica permissão de câmera (mobile_scanner gerencia automaticamente)
+  static Future<bool> checkCameraPermission() async {
+    try {
+      final status = await Permission.camera.status;
+      AppLogger.i('Camera permission status: $status');
+      return status == PermissionStatus.granted;
+    } catch (e, stackTrace) {
+      AppLogger.e('Error checking camera permission', e, stackTrace);
+      return false;
+    }
+  }
+  
+  /// Para casos onde precisa solicitar explicitamente (rare com mobile_scanner)
   static Future<bool> requestCameraPermission() async {
     try {
       final status = await Permission.camera.request();
-      AppLogger.i('Camera permission status: $status');
+      AppLogger.i('Camera permission requested: $status');
       return status == PermissionStatus.granted;
     } catch (e, stackTrace) {
       AppLogger.e('Error requesting camera permission', e, stackTrace);
@@ -67,38 +80,60 @@ class PermissionsHelper {
     }
   }
   
-  static Future<Map<String, bool>> requestAllPermissions() async {
-    AppLogger.i('Requesting all necessary permissions...');
+  /// Para AR e localização (câmera é gerenciada pelo mobile_scanner)
+  static Future<Map<String, bool>> requestEssentialPermissions() async {
+    AppLogger.i('Requesting essential permissions...');
     
     final results = await Future.wait([
-      requestCameraPermission(),
       requestLocationPermission(),
       requestStoragePermission(),
       requestNotificationPermission(),
     ]);
     
     final permissionMap = {
-      'camera': results[0],
-      'location': results[1],
-      'storage': results[2],
-      'notification': results[3],
+      'location': results[0],
+      'storage': results[1],
+      'notification': results[2],
     };
     
     AppLogger.i('Permission results: $permissionMap');
     return permissionMap;
   }
   
-  static Future<bool> hasAllCriticalPermissions() async {
+  static Future<bool> hasEssentialPermissions() async {
     try {
-      final camera = await Permission.camera.isGranted;
       final location = await Geolocator.checkPermission();
       
-      return camera && 
-             (location == LocationPermission.always || 
-              location == LocationPermission.whileInUse);
+      return location == LocationPermission.always || 
+             location == LocationPermission.whileInUse;
     } catch (e, stackTrace) {
       AppLogger.e('Error checking permissions', e, stackTrace);
       return false;
+    }
+  }
+  
+  /// Para debug - verifica status de todas as permissões
+  static Future<Map<String, PermissionStatus>> getAllPermissionStatus() async {
+    try {
+      final statuses = await [
+        Permission.camera,
+        Permission.location,
+        Permission.storage,
+        Permission.notification,
+      ].request();
+      
+      final statusMap = {
+        'camera': statuses[Permission.camera]!,
+        'location': statuses[Permission.location]!,
+        'storage': statuses[Permission.storage]!,
+        'notification': statuses[Permission.notification]!,
+      };
+      
+      AppLogger.i('All permission statuses: $statusMap');
+      return statusMap;
+    } catch (e, stackTrace) {
+      AppLogger.e('Error getting all permission statuses', e, stackTrace);
+      return {};
     }
   }
 }

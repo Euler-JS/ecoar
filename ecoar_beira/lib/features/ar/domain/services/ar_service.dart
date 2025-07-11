@@ -1,46 +1,51 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:ar_flutter_plugin/datatypes/node_types.dart';
-import 'package:arcore_flutter_plugin/arcore_flutter_plugin.dart';
-import 'package:ecoar_beira/core/models/ar_object_model.dart';
-import 'package:ecoar_beira/core/models/ar_scene_model.dart';
-import 'package:ecoar_beira/core/utils/logger.dart';
+import 'dart:typed_data';
+import 'package:ar_flutter_plugin/models/ar_hittest_result.dart';
 import 'package:flutter/services.dart';
+import 'package:ar_flutter_plugin/datatypes/node_types.dart';
 import 'package:ar_flutter_plugin/models/ar_node.dart';
 import 'package:ar_flutter_plugin/managers/ar_session_manager.dart';
 import 'package:ar_flutter_plugin/managers/ar_object_manager.dart';
 import 'package:ar_flutter_plugin/managers/ar_anchor_manager.dart';
-import 'package:vector_math/vector_math.dart' hide Vector3, Vector4;
+import 'package:ar_flutter_plugin/managers/ar_location_manager.dart';
+import 'package:ar_flutter_plugin/datatypes/config_planedetection.dart';
+import 'package:ar_flutter_plugin/datatypes/hittest_result_types.dart';
 import 'package:vector_math/vector_math_64.dart';
-import 'package:vector_math/vector_math_64.dart' as arcore show Vector3;
+import 'package:ecoar_beira/core/models/ar_object_model.dart';
+import 'package:ecoar_beira/core/models/ar_scene_model.dart';
+import 'package:ecoar_beira/core/utils/logger.dart';
 
 class ARService {
   static ARService? _instance;
   static ARService get instance => _instance ??= ARService._();
   ARService._();
 
-  ArCoreController? _arCoreController;
-  ArCoreMaterial? _arCoreMaterial;
-
-  // arcore.ArCoreController? _arCoreController;
+  // AR Flutter Plugin managers - universal para Android/iOS
+  ARSessionManager? _sessionManager;
+  ARObjectManager? _objectManager;
+  ARAnchorManager? _anchorManager;
+  ARLocationManager? _locationManager;
   
-  // Corrigido: Usar as classes corretas do ar_flutter_plugin
-  ARSessionManager? _arSessionManager;
-  ARObjectManager? _arObjectManager;
-  ARAnchorManager? _arAnchorManager;
-  
+  // Event management
   StreamController<AREvent>? _eventController;
+  
+  // State management
   bool _isInitialized = false;
   bool _isSessionActive = false;
   ARSceneModel? _currentScene;
-  final Map<String, ArCoreNode> _arCoreNodes = {};
-  final Map<String, ARNode> _arNodes = {}; // Corrigido: ARNode sem prefixo
+  
+  // Node tracking
+  final Map<String, ARNode> _activeNodes = {};
+  final Map<String, StreamSubscription> _nodeSubscriptions = {};
 
+  // Public getters
   Stream<AREvent> get eventStream => _eventController?.stream ?? const Stream.empty();
   bool get isInitialized => _isInitialized;
   bool get isSessionActive => _isSessionActive;
   ARSceneModel? get currentScene => _currentScene;
 
+  /// Initialize the AR service
   Future<bool> initialize() async {
     try {
       AppLogger.i('Initializing AR Service...');
@@ -50,25 +55,12 @@ class ARService {
         return true;
       }
 
+      // Initialize event stream
       _eventController = StreamController<AREvent>.broadcast();
 
-      // Check AR availability
-      if (Platform.isAndroid) {
-        final isAvailable = await ArCoreController.checkArCoreAvailability();
-        if (!isAvailable) {
-          AppLogger.e('ARCore not available on this device');
-          _broadcastEvent(AREvent.error('ARCore não disponível neste dispositivo'));
-          return false;
-        }
-
-        final isInstalled = await ArCoreController.checkIsArCoreInstalled();
-        if (!isInstalled) {
-          AppLogger.e('ARCore not installed');
-          _broadcastEvent(AREvent.error('ARCore não está instalado'));
-          return false;
-        }
-      }
-
+      // Basic platform checks can be done here if needed
+      // but ar_flutter_plugin handles platform differences internally
+      
       _isInitialized = true;
       AppLogger.i('AR Service initialized successfully');
       _broadcastEvent(AREvent.initialized());
@@ -81,6 +73,49 @@ class ARService {
     }
   }
 
+  /// Configure AR managers from ARView widget
+  void configureManagers({
+    required ARSessionManager sessionManager,
+    required ARObjectManager objectManager,
+    required ARAnchorManager anchorManager,
+    required ARLocationManager locationManager,
+  }) {
+    AppLogger.i('Configuring AR managers...');
+    
+    _sessionManager = sessionManager;
+    _objectManager = objectManager;
+    _anchorManager = anchorManager;
+    _locationManager = locationManager;
+    
+    _setupEventListeners();
+    AppLogger.i('AR managers configured successfully');
+  }
+
+  /// Setup event listeners for AR interactions
+  void _setupEventListeners() {
+    try {
+      // Setup node tap listener
+      _objectManager?.onNodeTap = (List<String> nodeNames) {
+        if (nodeNames.isNotEmpty) {
+          final nodeName = nodeNames.first;
+          AppLogger.d('Node tapped: $nodeName');
+          onObjectTapped(nodeName);
+        }
+      };
+
+      // Setup plane detection listener (if available)
+      _sessionManager?.onPlaneOrPointTap = (List<ARHitTestResult> hitResults) {
+        AppLogger.d('Plane or point tapped - ${hitResults.length} hits');
+        _handlePlaneDetection(hitResults);
+      };
+
+      AppLogger.d('AR event listeners configured');
+    } catch (e, stackTrace) {
+      AppLogger.e('Error setting up AR event listeners', e, stackTrace);
+    }
+  }
+
+  /// Start AR session with configuration
   Future<bool> startSession({
     bool enablePlaneDetection = true,
     bool enableLightEstimation = true,
@@ -99,16 +134,14 @@ class ARService {
 
       AppLogger.i('Starting AR Session...');
 
-      if (Platform.isAndroid) {
-        // Configure ARCore session
-        // This would be handled by the ArCoreView widget
-        _isSessionActive = true;
-      } else if (Platform.isIOS) {
-        // Corrigido: Inicialização correta para iOS
-        // Os managers são inicializados junto com o ARView widget
-        _isSessionActive = true;
+      // Configure plane detection
+      if (enablePlaneDetection && _sessionManager != null) {
+        // await _sessionManager!.enablePlaneDetection(
+        //   PlaneDetectionConfig.horizontalAndVertical,
+        // );
       }
 
+      _isSessionActive = true;
       _broadcastEvent(AREvent.sessionStarted());
       AppLogger.i('AR Session started successfully');
       return true;
@@ -120,37 +153,7 @@ class ARService {
     }
   }
 
-  // Método para configurar os managers do ARKit (chamado pelo widget AR)
-  void configureARKitManagers({
-    required ARSessionManager sessionManager,
-    required ARObjectManager objectManager,
-    required ARAnchorManager anchorManager,
-  }) {
-    _arSessionManager = sessionManager;
-    _arObjectManager = objectManager;
-    _arAnchorManager = anchorManager;
-    
-    // Configurar callbacks
-    // _arSessionManager?.onInitialize = () {
-    //   AppLogger.i('ARKit session initialized');
-    //   _isSessionActive = true;
-    //   _broadcastEvent(AREvent.sessionStarted());
-    // };
-
-    // _arSessionManager?.onPlaneOrPointTap = (List<ARHitTestResult> hitResults) {
-    //   AppLogger.d('Plane or point tapped');
-    //   // Processar tap nos planos
-    // };
-
-    _arObjectManager?.onNodeTap = (List<String> nodeNames) {
-      if (nodeNames.isNotEmpty) {
-        final nodeName = nodeNames.first;
-        AppLogger.d('Node tapped: $nodeName');
-        onObjectTapped(nodeName);
-      }
-    };
-  }
-
+  /// Load complete AR scene
   Future<bool> loadScene(ARSceneModel scene) async {
     try {
       if (!_isSessionActive) {
@@ -163,21 +166,20 @@ class ARService {
 
       // Clear existing scene
       await clearScene();
-
       _currentScene = scene;
 
-      // Load environment
+      // Load environment settings
       await _loadEnvironment(scene.environment);
 
-      // Load lighting
+      // Load lighting configuration
       await _loadLighting(scene.lighting);
 
-      // Load sound
+      // Load sound configuration
       if (scene.sound != null) {
         await _loadSound(scene.sound!);
       }
 
-      // Load AR objects
+      // Load all AR objects
       for (final object in scene.objects) {
         await _loadARObject(object);
       }
@@ -186,7 +188,7 @@ class ARService {
       await _setupInteractions(scene.interactions);
 
       _broadcastEvent(AREvent.sceneLoaded(scene.id));
-      AppLogger.i('AR scene loaded successfully');
+      AppLogger.i('AR scene loaded successfully: ${scene.name}');
       return true;
 
     } catch (e, stackTrace) {
@@ -196,70 +198,73 @@ class ARService {
     }
   }
 
+  /// Load individual AR object
   Future<void> _loadARObject(ARObjectModel object) async {
     try {
       AppLogger.d('Loading AR object: ${object.name}');
 
-      if (Platform.isAndroid) {
-        await _loadARCoreObject(object);
-      } else if (Platform.isIOS) {
-        await _loadARKitObject(object);
+      if (_objectManager == null) {
+        throw Exception('Object manager not configured');
       }
 
-      _broadcastEvent(AREvent.objectLoaded(object.id));
-
-    } catch (e, stackTrace) {
-      AppLogger.e('Error loading AR object: ${object.name}', e, stackTrace);
-      _broadcastEvent(AREvent.error('Erro ao carregar objeto AR: ${object.name}'));
-    }
-  }
-
-  Future<void> _loadARCoreObject(ARObjectModel object) async {
-    if (_arCoreController == null) return;
-
-    try {
-      // Create ARCore node
-      // Create appropriate shape based on object type
-      switch (object.type) {
-        case ARObjectType.animal:
-        case ARObjectType.plant:
-          if (object.modelPath.isNotEmpty) {
-           
-          } else {
-            
-          }
-          break;
-        case ARObjectType.tree:
-          
-          break;
-        case ARObjectType.building:
-          
-          break;
-        default:
-          
+      // Create AR node based on object type
+      final node = await _createARNode(object);
+      if (node == null) {
+        throw Exception('Failed to create AR node for ${object.name}');
       }
+
+      // Add node to scene
+      final success = await _objectManager!.addNode(node);
+      if (success != true) {
+        throw Exception('Failed to add node to AR scene');
+      }
+
+      // Store node reference
+      _activeNodes[object.id] = node;
 
       // Start animations if any
       for (final animation in object.animations) {
         _startAnimation(object.id, animation);
       }
 
+      _broadcastEvent(AREvent.objectLoaded(object.id));
+      AppLogger.d('AR object loaded successfully: ${object.name}');
+
     } catch (e, stackTrace) {
-      AppLogger.e('Error loading ARCore object', e, stackTrace);
-      rethrow;
+      AppLogger.e('Error loading AR object: ${object.name}', e, stackTrace);
+      _broadcastEvent(AREvent.error('Erro ao carregar objeto: ${object.name}'));
     }
   }
 
-  Future<void> _loadARKitObject(ARObjectModel object) async {
-    if (_arObjectManager == null) return;
-
+  /// Create AR node from object model
+  Future<ARNode?> _createARNode(ARObjectModel object) async {
     try {
-      AppLogger.d('Loading ARKit object: ${object.name}');
-      
-      // Corrigido: Criação correta do ARNode
+      NodeType nodeType;
+      String? uri;
+
+      // Determine node type and URI based on object
+      if (object.modelPath.isNotEmpty) {
+        if (object.modelPath.toLowerCase().endsWith('.glb') || 
+            object.modelPath.toLowerCase().endsWith('.gltf')) {
+          nodeType = NodeType.localGLTF2;
+          uri = object.modelPath;
+        } else if (object.modelPath.toLowerCase().endsWith('.dae')) {
+          nodeType = NodeType.localGLTF2;
+          uri = object.modelPath;
+        } else {
+          // Default to GLTF2 for unknown formats
+          nodeType = NodeType.localGLTF2;
+          uri = object.modelPath;
+        }
+      } else {
+        // Create basic geometric shape for objects without models
+        nodeType = _getGeometricNodeType(object.type);
+      }
+
+      // Create the AR node
       final node = ARNode(
-        type: NodeType.localGLTF2,
-        uri: object.modelPath,
+        type: nodeType,
+        uri: uri!,
         scale: Vector3(
           object.scale.x,
           object.scale.y,
@@ -274,79 +279,71 @@ class ARService {
           object.rotation.x,
           object.rotation.y,
           object.rotation.z,
-          1.0,
+          object.rotation.x,
         ),
         name: object.id,
       );
 
-      _arNodes[object.id] = node;
-
-      // Corrigido: Adicionar node usando o object manager
-      final success = await _arObjectManager!.addNode(node);
-      if (!success!) {
-        AppLogger.e('Failed to add ARKit node: ${object.id}');
-      }
+      return node;
 
     } catch (e, stackTrace) {
-      AppLogger.e('Error loading ARKit object', e, stackTrace);
-      rethrow;
-    }
-  }
-
-  Future<Uint8List?> _loadTexture(String texturePath) async {
-    try {
-      if (texturePath.isEmpty) return null;
-      
-      if (texturePath.startsWith('assets/')) {
-        final byteData = await rootBundle.load(texturePath);
-        return byteData.buffer.asUint8List();
-      } else {
-        final file = File(texturePath);
-        if (await file.exists()) {
-          return await file.readAsBytes();
-        }
-      }
-      return null;
-    } catch (e) {
-      AppLogger.e('Error loading texture: $texturePath', e);
+      AppLogger.e('Error creating AR node', e, stackTrace);
       return null;
     }
   }
 
+  /// Get geometric node type for object without model
+  NodeType _getGeometricNodeType(ARObjectType objectType) {
+    switch (objectType) {
+      case ARObjectType.tree:
+        return NodeType.localGLTF2; // Use a default tree model
+      case ARObjectType.animal:
+        return NodeType.localGLTF2; // Use a default animal model
+      case ARObjectType.plant:
+        return NodeType.localGLTF2; // Use a default plant model
+      case ARObjectType.building:
+        return NodeType.localGLTF2; // Use a default building model
+      default:
+        return NodeType.localGLTF2; // Default fallback
+    }
+  }
+
+  /// Load environment configuration
   Future<void> _loadEnvironment(AREnvironment environment) async {
     try {
-      AppLogger.d('Loading AR environment');
+      AppLogger.d('Loading AR environment configuration');
       
       // Load particle systems
       for (final particleSystem in environment.particleSystems) {
         await _createParticleSystem(particleSystem);
       }
 
-      // Set fog and lighting would be handled by the AR framework
-      // This is a simplified implementation
+      // Environment fog and atmosphere settings would be handled by 
+      // the AR framework automatically or through scene configuration
 
     } catch (e, stackTrace) {
       AppLogger.e('Error loading AR environment', e, stackTrace);
     }
   }
 
+  /// Create particle system (simplified implementation)
   Future<void> _createParticleSystem(ARParticleSystem particleSystem) async {
     try {
       AppLogger.d('Creating particle system: ${particleSystem.id}');
       
-      // Create particle system - this would be implemented based on the AR framework
       // For now, we'll create a simple representation
+      // In a full implementation, this would create multiple small objects
+      // to simulate particles or use a specialized particle system
       
-      if (Platform.isAndroid && _arCoreController != null) {
-        // Create multiple small spheres to simulate particles
-       
-      }
+      // This could be implemented by creating multiple small spheres
+      // or using specialized particle effect models
 
     } catch (e, stackTrace) {
       AppLogger.e('Error creating particle system', e, stackTrace);
     }
   }
 
+  /// Load lighting configuration
   Future<void> _loadLighting(ARLighting lighting) async {
     try {
       AppLogger.d('Setting up AR lighting');
@@ -356,35 +353,42 @@ class ARService {
         await _createLight(light);
       }
 
+      // Lighting in ar_flutter_plugin is mostly handled automatically
+      // through light estimation, but we can store configuration for
+      // custom lighting effects
+
     } catch (e, stackTrace) {
       AppLogger.e('Error loading AR lighting', e, stackTrace);
     }
   }
 
+  /// Create individual light (configuration storage)
   Future<void> _createLight(ARLight light) async {
     try {
-      AppLogger.d('Creating AR light: ${light.id}');
+      AppLogger.d('Configuring AR light: ${light.id}');
       
-      // Light creation would be framework-specific
-      // This is a simplified implementation
+      // Store light configuration for potential future use
+      // ar_flutter_plugin handles most lighting automatically
 
     } catch (e, stackTrace) {
-      AppLogger.e('Error creating AR light', e, stackTrace);
+      AppLogger.e('Error configuring AR light', e, stackTrace);
     }
   }
 
+  /// Load sound configuration
   Future<void> _loadSound(ARSound sound) async {
     try {
-      AppLogger.d('Loading AR sound: ${sound.id}');
+      AppLogger.d('Loading AR sound configuration: ${sound.id}');
       
-      // Sound loading would be implemented using audioplayers package
-      // This would handle 3D positional audio if supported
+      // Sound would be handled by audioplayers package
+      // Store configuration for 3D positional audio if needed
 
     } catch (e, stackTrace) {
       AppLogger.e('Error loading AR sound', e, stackTrace);
     }
   }
 
+  /// Setup interaction handlers
   Future<void> _setupInteractions(List<ARInteraction> interactions) async {
     try {
       AppLogger.d('Setting up AR interactions');
@@ -398,11 +402,11 @@ class ARService {
     }
   }
 
+  /// Register individual interaction
   Future<void> _registerInteraction(ARInteraction interaction) async {
     try {
       AppLogger.d('Registering interaction: ${interaction.id}');
       
-      // Register interaction handlers based on trigger type
       switch (interaction.trigger) {
         case ARInteractionTrigger.onTap:
           _setupTapInteraction(interaction);
@@ -426,22 +430,21 @@ class ARService {
   }
 
   void _setupTapInteraction(ARInteraction interaction) {
-    // Setup tap handling for the target object
     AppLogger.d('Setting up tap interaction for: ${interaction.targetObjectId}');
+    // Tap interactions are handled by the onNodeTap callback
   }
 
   void _setupLongPressInteraction(ARInteraction interaction) {
-    // Setup long press handling
     AppLogger.d('Setting up long press interaction for: ${interaction.targetObjectId}');
+    // Long press would need custom gesture detection
   }
 
   void _setupProximityInteraction(ARInteraction interaction) {
-    // Setup proximity detection
     AppLogger.d('Setting up proximity interaction for: ${interaction.targetObjectId}');
+    // Proximity detection would use location manager
   }
 
   void _setupTimerInteraction(ARInteraction interaction) {
-    // Setup timer-based interaction
     final delay = Duration(
       milliseconds: interaction.parameters['delay'] as int? ?? 0,
     );
@@ -451,6 +454,7 @@ class ARService {
     });
   }
 
+  /// Execute interaction effects
   void _executeInteractionEffects(List<ARInteractionEffect> effects) {
     for (final effect in effects) {
       Timer(effect.delay, () {
@@ -459,6 +463,7 @@ class ARService {
     }
   }
 
+  /// Execute individual effect
   void _executeEffect(ARInteractionEffect effect) {
     switch (effect.type) {
       case AREffectType.playAnimation:
@@ -515,15 +520,14 @@ class ARService {
     _broadcastEvent(AREvent.particlesSpawned(position));
   }
 
+  /// Start animation on object
   void _startAnimation(String objectId, ARAnimation animation) {
     AppLogger.d('Starting animation: ${animation.id} on object: $objectId');
     
-    // Animation implementation would depend on the AR framework
-    // This is a simplified version
-    
-    Timer.periodic(Duration(milliseconds: 16), (timer) {
-      // Update animation frame
-      if (timer.tick * 16 >= animation.duration.inMilliseconds) {
+    // Create animation timer
+    Timer.periodic(const Duration(milliseconds: 16), (timer) {
+      final elapsed = timer.tick * 16;
+      if (elapsed >= animation.duration.inMilliseconds) {
         timer.cancel();
         if (animation.isLooping) {
           _startAnimation(objectId, animation);
@@ -532,6 +536,15 @@ class ARService {
     });
   }
 
+  /// Handle plane detection results
+  void _handlePlaneDetection(List<ARHitTestResult> hitResults) {
+    for (final result in hitResults) {
+      AppLogger.d('Plane detected at: ${result.worldTransform}');
+      _broadcastEvent(AREvent.planeDetected('plane_${DateTime.now().millisecondsSinceEpoch}'));
+    }
+  }
+
+  /// Handle object tap events
   Future<void> onObjectTapped(String objectId) async {
     try {
       AppLogger.d('Object tapped: $objectId');
@@ -555,24 +568,31 @@ class ARService {
     }
   }
 
+  /// Clear all objects from current scene
   Future<void> clearScene() async {
     try {
       AppLogger.d('Clearing AR scene');
 
-      // Clear ARCore nodes
-      for (final node in _arCoreNodes.values) {
-        await _arCoreController?.removeNode(nodeName: node.name);
-      }
-      _arCoreNodes.clear();
-
-      // Clear ARKit nodes
-      if (_arObjectManager != null) {
-        for (final nodeId in _arNodes.keys) {
-          await _arObjectManager!.removeNode(_arNodes[nodeId]!);
+      if (_objectManager != null) {
+        // Remove all active nodes
+        for (final entry in _activeNodes.entries) {
+          try {
+            await _objectManager!.removeNode(entry.value);
+          } catch (e) {
+            AppLogger.w('Error removing node ${entry.key}: $e');
+          }
         }
       }
-      _arNodes.clear();
 
+      // Cancel all subscriptions
+      for (final subscription in _nodeSubscriptions.values) {
+        await subscription.cancel();
+      }
+
+      // Clear tracking maps
+      _activeNodes.clear();
+      _nodeSubscriptions.clear();
+      
       _currentScene = null;
       _broadcastEvent(AREvent.sceneCleared());
 
@@ -581,19 +601,14 @@ class ARService {
     }
   }
 
+  /// Pause AR session
   Future<void> pauseSession() async {
     try {
       if (!_isSessionActive) return;
 
       AppLogger.i('Pausing AR session');
       
-      // Pause AR session
-      if (Platform.isAndroid) {
-        // ARCore pause handling
-      } else if (Platform.isIOS) {
-        // _arSessionManager?.pause();
-      }
-
+      // await _sessionManager?.pause();
       _broadcastEvent(AREvent.sessionPaused());
 
     } catch (e, stackTrace) {
@@ -601,19 +616,14 @@ class ARService {
     }
   }
 
+  /// Resume AR session
   Future<void> resumeSession() async {
     try {
       if (!_isInitialized) return;
 
       AppLogger.i('Resuming AR session');
       
-      // Resume AR session
-      if (Platform.isAndroid) {
-        // ARCore resume handling
-      } else if (Platform.isIOS) {
-        // _arSessionManager?.resume();
-      }
-
+      // await _sessionManager?.resume();
       _isSessionActive = true;
       _broadcastEvent(AREvent.sessionResumed());
 
@@ -622,26 +632,27 @@ class ARService {
     }
   }
 
+  /// Stop AR session
   Future<void> stopSession() async {
     try {
       if (!_isSessionActive) return;
 
       AppLogger.i('Stopping AR session');
 
+      // Clear scene first
       await clearScene();
 
-      // Stop AR session
-      if (Platform.isAndroid) {
-        _arCoreController?.dispose();
-        _arCoreController = null;
-      } else if (Platform.isIOS) {
-        _arSessionManager?.dispose();
-        // _arObjectManager?.dispose();
-        // _arAnchorManager?.dispose();
-        _arSessionManager = null;
-        _arObjectManager = null;
-        _arAnchorManager = null;
-      }
+      // Dispose managers
+      await _sessionManager?.dispose();
+      // await _objectManager?.dispose();
+      // await _anchorManager?.dispose();
+      // await _locationManager?.dispose();
+
+      // Reset references
+      _sessionManager = null;
+      _objectManager = null;
+      _anchorManager = null;
+      _locationManager = null;
 
       _isSessionActive = false;
       _broadcastEvent(AREvent.sessionStopped());
@@ -651,15 +662,12 @@ class ARService {
     }
   }
 
-  void setArCoreController(ArCoreController controller) {
-    _arCoreController = controller;
-    AppLogger.d('ARCore controller set');
-  }
-
+  /// Broadcast event to listeners
   void _broadcastEvent(AREvent event) {
     _eventController?.add(event);
   }
 
+  /// Dispose service and cleanup resources
   Future<void> dispose() async {
     try {
       AppLogger.i('Disposing AR Service');

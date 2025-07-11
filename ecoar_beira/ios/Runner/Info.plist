@@ -12,6 +12,8 @@
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Este aplicativo precisa acessar a câmera para escanear códigos QR e utilizar recursos de Realidade Aumentada para experiências educativas.</string>
 	<key>CFBundleName</key>
 	<string>ecoar_beira</string>
 	<key>CFBundlePackageType</key>

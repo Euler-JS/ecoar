@@ -1,10 +1,8 @@
 import 'package:ecoar_beira/core/theme/app_theme.dart';
 import 'package:ecoar_beira/core/utils/logger.dart';
 import 'package:flutter/material.dart';
-import 'package:qr_code_scanner/qr_code_scanner.dart';
 import 'package:go_router/go_router.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'dart:io';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'dart:async';
 
 class ScannerPage extends StatefulWidget {
@@ -16,23 +14,15 @@ class ScannerPage extends StatefulWidget {
 
 class _ScannerPageState extends State<ScannerPage>
     with TickerProviderStateMixin, WidgetsBindingObserver {
-  final GlobalKey qrKey = GlobalKey(debugLabel: 'QR');
-  QRViewController? controller;
-  Timer? _fallbackTimer;
-  Timer? _cameraCheckTimer;
+  
+  late MobileScannerController scannerController;
+  StreamSubscription<Object?>? _subscription;
   
   bool isScanning = true;
-  bool hasPermission = false;
   bool isFlashOn = false;
   bool isProcessingQR = false;
   bool _isInitialized = false;
-  bool _forceCamera = false;
-  bool _qrViewWorking = false;
-  bool _permissionCheckDisabled = false;
-  bool _cameraReady = false;
   String? _errorMessage;
-  int _permissionAttempts = 0;
-  int _cameraRetryCount = 0;
   
   late AnimationController _animationController;
   late Animation<double> _scanLineAnimation;
@@ -48,56 +38,32 @@ class _ScannerPageState extends State<ScannerPage>
   }
 
   @override
-  void reassemble() {
-    super.reassemble();
-    if (controller != null) {
-      if (Platform.isAndroid) {
-        controller!.pauseCamera();
-      }
-      controller!.resumeCamera();
-    }
-  }
-
-  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _fallbackTimer?.cancel();
-    _cameraCheckTimer?.cancel();
+    _subscription?.cancel();
     _animationController.dispose();
     _pulseController.dispose();
-    controller?.dispose();
+    scannerController.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    AppLogger.i('App lifecycle state changed: $state');
-    
-    if (controller == null) return;
+    if (!_isInitialized) return;
     
     switch (state) {
       case AppLifecycleState.resumed:
-        _resumeCameraAfterDelay();
+        _resumeScanning();
         break;
       case AppLifecycleState.inactive:
       case AppLifecycleState.paused:
-        controller!.pauseCamera();
+        _pauseScanning();
         break;
       case AppLifecycleState.detached:
-        controller!.dispose();
         break;
       case AppLifecycleState.hidden:
         break;
     }
-  }
-
-  void _resumeCameraAfterDelay() {
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted && controller != null) {
-        controller!.resumeCamera();
-        _startCameraCheck();
-      }
-    });
   }
 
   void _setupAnimations() {
@@ -121,152 +87,55 @@ class _ScannerPageState extends State<ScannerPage>
   }
 
   Future<void> _initializeScanner() async {
-    AppLogger.i('Inicializando scanner...');
-    
-    setState(() {
-      _isInitialized = true;
-    });
-    
-    await _checkPermissionOnce();
-    
-    if (!hasPermission && !_permissionCheckDisabled) {
-      _startFallbackTimer();
-    }
-  }
-
-  Future<void> _checkPermissionOnce() async {
-    if (_permissionCheckDisabled) return;
-    
-    AppLogger.i('Verificando permissão única vez...');
-    _permissionAttempts++;
-    
     try {
-      final status = await Permission.camera.status;
-      AppLogger.i('Status da permissão: $status');
+      AppLogger.i('Inicializando mobile scanner...');
       
-      if (status.isGranted) {
-        AppLogger.i('Permissão concedida!');
-        _setPermissionGranted();
-        return;
-      }
+      scannerController = MobileScannerController(
+        facing: CameraFacing.back,
+        torchEnabled: false,
+        returnImage: false,
+        formats: [BarcodeFormat.qrCode],
+      );
+
+      await scannerController.start();
       
-      if (status.isDenied && _permissionAttempts == 1) {
-        AppLogger.i('Tentando solicitar permissão...');
-        final result = await Permission.camera.request();
-        AppLogger.i('Resultado da solicitação: $result');
-        
-        if (result.isGranted) {
-          _setPermissionGranted();
-          return;
-        }
-      }
+      setState(() {
+        _isInitialized = true;
+        _errorMessage = null;
+      });
       
-      AppLogger.w('Não conseguiu permissão. Tentativas: $_permissionAttempts');
+      AppLogger.i('Mobile scanner inicializado com sucesso!');
       
-      if (_permissionAttempts >= 2) {
-        AppLogger.i('Muitas tentativas. Ativando fallback...');
-        _permissionCheckDisabled = true;
-        setState(() {
-          _errorMessage = 'Tentando carregar câmera...';
-        });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Scanner carregado! 📱'),
+            backgroundColor: AppTheme.successGreen,
+            duration: Duration(seconds: 2),
+          ),
+        );
       }
       
     } catch (e, stackTrace) {
-      AppLogger.e('Erro ao verificar permissão', e, stackTrace);
-      _permissionCheckDisabled = true;
+      AppLogger.e('Erro ao inicializar scanner', e, stackTrace);
+      setState(() {
+        _errorMessage = 'Erro ao carregar câmera: $e';
+      });
     }
   }
 
-  void _setPermissionGranted() {
-    AppLogger.i('Permissão configurada como concedida');
-    setState(() {
-      hasPermission = true;
-      _errorMessage = null;
-    });
-    _fallbackTimer?.cancel();
-    _permissionCheckDisabled = true;
+  void _onBarcodeDetect(BarcodeCapture capture) {
+    if (!isScanning || isProcessingQR) return;
     
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Permissão de câmera concedida! 📸'),
-          backgroundColor: AppTheme.successGreen,
-          duration: Duration(seconds: 2),
-        ),
-      );
+    final List<Barcode> barcodes = capture.barcodes;
+    
+    for (final barcode in barcodes) {
+      if (barcode.rawValue != null) {
+        AppLogger.i('QR Code detectado: ${barcode.rawValue}');
+        _handleQRCode(barcode.rawValue!);
+        break; // Processa apenas o primeiro código válido
+      }
     }
-  }
-
-  void _startFallbackTimer() {
-    AppLogger.i('Iniciando timer de fallback...');
-    
-    _fallbackTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted && !hasPermission && !_qrViewWorking) {
-        AppLogger.i('Fallback timer ativado - forçando câmera');
-        _tryForceCamera();
-      }
-    });
-  }
-
-  void _tryForceCamera() {
-    AppLogger.i('Tentando forçar carregamento da câmera...');
-    
-    setState(() {
-      _forceCamera = true;
-      _errorMessage = 'Forçando carregamento da câmera...';
-    });
-    
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted) {
-        setState(() {
-          _errorMessage = null;
-        });
-      }
-    });
-  }
-
-  void _startCameraCheck() {
-    _cameraCheckTimer?.cancel();
-    _cameraCheckTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-      
-      // Se a câmera não estiver pronta após 10 segundos, tenta reinicializar
-      if (!_cameraReady && timer.tick > 5) {
-        AppLogger.w('Câmera não está pronta, tentando reinicializar...');
-        _reinitializeCamera();
-        timer.cancel();
-      }
-    });
-  }
-
-  void _reinitializeCamera() {
-    _cameraRetryCount++;
-    if (_cameraRetryCount > 3) {
-      AppLogger.e('Muitas tentativas de reinicialização da câmera');
-      return;
-    }
-    
-    AppLogger.i('Reinicializando câmera (tentativa $_cameraRetryCount)...');
-    
-    controller?.dispose();
-    controller = null;
-    
-    setState(() {
-      _cameraReady = false;
-      _qrViewWorking = false;
-    });
-    
-    // Pequeno delay antes de recriar
-    Future.delayed(const Duration(milliseconds: 1000), () {
-      if (mounted) {
-        setState(() {
-          // Força rebuild do QRView
-        });
-      }
-    });
   }
 
   @override
@@ -275,11 +144,11 @@ class _ScannerPageState extends State<ScannerPage>
       return _buildLoadingScreen();
     }
     
-    if (hasPermission || _forceCamera) {
-      return _buildMainScanner();
+    if (_errorMessage != null) {
+      return _buildErrorScreen();
     }
     
-    return _buildPermissionScreen();
+    return _buildMainScanner();
   }
 
   Widget _buildLoadingScreen() {
@@ -294,7 +163,7 @@ class _ScannerPageState extends State<ScannerPage>
             ),
             SizedBox(height: 24),
             Text(
-              'Inicializando scanner...',
+              'Carregando scanner...',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 18,
@@ -307,7 +176,7 @@ class _ScannerPageState extends State<ScannerPage>
     );
   }
 
-  Widget _buildPermissionScreen() {
+  Widget _buildErrorScreen() {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Scanner QR'),
@@ -320,13 +189,13 @@ class _ScannerPageState extends State<ScannerPage>
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Icon(
-                Icons.camera_alt,
+                Icons.error_outline,
                 size: 80,
-                color: AppTheme.primaryGreen,
+                color: Colors.red,
               ),
               const SizedBox(height: 24),
               const Text(
-                'Permissão de Câmera',
+                'Erro no Scanner',
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
@@ -334,64 +203,27 @@ class _ScannerPageState extends State<ScannerPage>
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
-              const Text(
-                'Parece que a câmera não está acessível. Vamos tentar algumas opções:',
-                style: TextStyle(fontSize: 16),
+              Text(
+                _errorMessage ?? 'Erro desconhecido',
+                style: const TextStyle(fontSize: 16),
                 textAlign: TextAlign.center,
               ),
-              
-              if (_errorMessage != null) ...[
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue.shade200),
-                  ),
-                  child: Text(
-                    _errorMessage!,
-                    style: const TextStyle(
-                      color: Colors.blue,
-                      fontSize: 14,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ],
-              
               const SizedBox(height: 32),
-              
               ElevatedButton(
-                onPressed: _permissionCheckDisabled ? null : () {
-                  _checkPermissionOnce();
+                onPressed: () {
+                  setState(() {
+                    _errorMessage = null;
+                    _isInitialized = false;
+                  });
+                  _initializeScanner();
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.primaryGreen,
                   padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                   minimumSize: const Size(double.infinity, 50),
                 ),
-                child: Text(
-                  _permissionCheckDisabled ? 'Verificação Desabilitada' : 'Verificar Permissão',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              
-              const SizedBox(height: 16),
-              
-              ElevatedButton(
-                onPressed: _tryForceCamera,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange,
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                  minimumSize: const Size(double.infinity, 50),
-                ),
                 child: const Text(
-                  'Tentar Carregar Câmera',
+                  'Tentar Novamente',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 16,
@@ -399,30 +231,7 @@ class _ScannerPageState extends State<ScannerPage>
                   ),
                 ),
               ),
-              
               const SizedBox(height: 16),
-              
-              OutlinedButton(
-                onPressed: () async {
-                  await openAppSettings();
-                },
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppTheme.primaryGreen,
-                  side: const BorderSide(color: AppTheme.primaryGreen),
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                  minimumSize: const Size(double.infinity, 50),
-                ),
-                child: const Text(
-                  'Abrir Configurações',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              
-              const SizedBox(height: 16),
-              
               TextButton(
                 onPressed: () => context.go('/home'),
                 child: const Text('Voltar para Início'),
@@ -438,23 +247,18 @@ class _ScannerPageState extends State<ScannerPage>
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: Text(_cameraReady ? 'Scanner QR' : 'Carregando Câmera...'),
+        title: const Text('Scanner QR'),
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
           IconButton(
             icon: Icon(isScanning ? Icons.pause : Icons.play_arrow),
-            onPressed: _cameraReady ? _toggleScanning : null,
+            onPressed: _toggleScanning,
             color: Colors.white,
           ),
           IconButton(
             icon: Icon(isFlashOn ? Icons.flash_off : Icons.flash_on),
-            onPressed: _cameraReady ? _toggleFlash : null,
-            color: Colors.white,
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _reinitializeCamera,
+            onPressed: _toggleFlash,
             color: Colors.white,
           ),
           IconButton(
@@ -466,173 +270,26 @@ class _ScannerPageState extends State<ScannerPage>
       ),
       body: Stack(
         children: [
-          // QR Camera View
-          _buildQRView(),
+          // Mobile Scanner Camera View
+          MobileScanner(
+            controller: scannerController,
+            onDetect: _onBarcodeDetect,
+            overlay: Container(), // Overlay transparente
+          ),
           
           // Scanning Overlay
-          if (_cameraReady) _buildScanningOverlay(),
+          if (isScanning) _buildScanningOverlay(),
           
           // Instructions
           _buildInstructions(),
           
           // Processing Overlay
           if (isProcessingQR) _buildProcessingOverlay(),
-          
-          // Camera Loading/Error Overlay
-          if (!_cameraReady) _buildCameraLoadingOverlay(),
         ],
       ),
     );
   }
 
-  Widget _buildCameraLoadingOverlay() {
-    return Container(
-      color: Colors.black.withOpacity(0.8),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryGreen),
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'Carregando câmera...',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Tentativa $_cameraRetryCount de 3',
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: _reinitializeCamera,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primaryGreen,
-              ),
-              child: const Text(
-                'Tentar Novamente',
-                style: TextStyle(color: Colors.white),
-              ),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () => context.go('/home'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.grey,
-              ),
-              child: const Text(
-                'Voltar',
-                style: TextStyle(color: Colors.white),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildQRView() {
-    // Força rebuild com nova key quando reinicializa
-    final key = GlobalKey(debugLabel: 'QR_${DateTime.now().millisecondsSinceEpoch}');
-    
-    return QRView(
-      key: key,
-      onQRViewCreated: _onQRViewCreated,
-      overlay: QrScannerOverlayShape(
-        borderColor: Colors.transparent,
-        borderRadius: 12,
-        borderLength: 0,
-        borderWidth: 0,
-        cutOutSize: 280,
-      ),
-      onPermissionSet: (ctrl, p) => _onPermissionSet(ctrl, p),
-      // Adiciona configurações específicas
-      cameraFacing: CameraFacing.back,
-      formatsAllowed: const [BarcodeFormat.qrcode],
-    );
-  }
-
-  void _onQRViewCreated(QRViewController controller) {
-    this.controller = controller;
-    AppLogger.i('QR View criada com sucesso');
-    
-    // Configura a câmera imediatamente
-    _configureCameraSettings();
-    
-    // Inicia verificação de câmera
-    _startCameraCheck();
-    
-    controller.scannedDataStream.listen((scanData) {
-      if (scanData.code != null && isScanning && !isProcessingQR) {
-        AppLogger.i('QR Code detectado: ${scanData.code}');
-        _handleQRCode(scanData.code!);
-      }
-    });
-  }
-
-  void _configureCameraSettings() async {
-    if (controller == null) return;
-    
-    try {
-      // Aguarda um pouco para a câmera inicializar
-      await Future.delayed(const Duration(milliseconds: 1000));
-      
-      // Tenta resumir a câmera
-      await controller!.resumeCamera();
-      
-      // Verifica se a câmera está funcionando
-      setState(() {
-        _cameraReady = true;
-        _qrViewWorking = true;
-        hasPermission = true;
-        _errorMessage = null;
-      });
-      
-      _cameraCheckTimer?.cancel();
-      
-      AppLogger.i('Câmera configurada e funcionando!');
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Câmera carregada com sucesso! 🎉'),
-            backgroundColor: AppTheme.successGreen,
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      AppLogger.e('Erro ao configurar câmera: $e');
-      if (mounted) {
-        setState(() {
-          _cameraReady = false;
-          _errorMessage = 'Erro ao configurar câmera';
-        });
-      }
-    }
-  }
-
-  void _onPermissionSet(QRViewController controller, bool p) {
-    AppLogger.i('Permissão configurada pelo QR View: $p');
-    
-    if (p) {
-      AppLogger.i('Permissão concedida pelo QR View!');
-      _configureCameraSettings();
-    } else {
-      AppLogger.w('Permissão negada pelo QR View');
-    }
-  }
-
-  // Resto dos métodos permanecem iguais...
   Widget _buildScanningOverlay() {
     return Center(
       child: Container(
@@ -805,17 +462,15 @@ class _ScannerPageState extends State<ScannerPage>
               ),
               child: Column(
                 children: [
-                  Icon(
-                    _cameraReady ? Icons.qr_code_scanner : Icons.camera_alt,
+                  const Icon(
+                    Icons.qr_code_scanner,
                     size: 48,
                     color: Colors.white,
                   ),
                   const SizedBox(height: 16),
-                  Text(
-                    _cameraReady 
-                      ? 'Posicione o código QR dentro da área de escaneamento'
-                      : 'Aguarde enquanto carregamos a câmera...',
-                    style: const TextStyle(
+                  const Text(
+                    'Posicione o código QR dentro da área verde',
+                    style: TextStyle(
                       color: Colors.white,
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -823,34 +478,30 @@ class _ScannerPageState extends State<ScannerPage>
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
-                  Text(
-                    _cameraReady
-                      ? 'Encontre os marcadores nos parques da Beira para começar experiências AR incríveis!'
-                      : 'Se não funcionar, toque no botão de refresh ou volte',
-                    style: const TextStyle(
+                  const Text(
+                    'Encontre os marcadores nos parques da Beira para experiências AR!',
+                    style: TextStyle(
                       color: Colors.white70,
                       fontSize: 14,
                     ),
                     textAlign: TextAlign.center,
                   ),
-                  if (_cameraReady) ...[
-                    const SizedBox(height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _buildActionButton(
-                          Icons.map,
-                          'Ver Mapa',
-                          () => context.go('/map'),
-                        ),
-                        _buildActionButton(
-                          Icons.help,
-                          'Ajuda',
-                          _showHelpDialog,
-                        ),
-                      ],
-                    ),
-                  ],
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildActionButton(
+                        Icons.map,
+                        'Ver Mapa',
+                        () => context.go('/map'),
+                      ),
+                      _buildActionButton(
+                        Icons.help,
+                        'Ajuda',
+                        _showHelpDialog,
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -923,10 +574,11 @@ class _ScannerPageState extends State<ScannerPage>
       isScanning = false;
       isProcessingQR = true;
     });
-    controller?.pauseCamera();
+    
+    _pauseScanning();
 
     try {
-      await Future.delayed(const Duration(milliseconds: 1000));
+      await Future.delayed(const Duration(milliseconds: 800));
       
       setState(() {
         isProcessingQR = false;
@@ -1057,11 +709,11 @@ class _ScannerPageState extends State<ScannerPage>
               Text('• Bacia 2: Recursos Hídricos'),
               Text('• Bacia 3: Agricultura Urbana'),
               SizedBox(height: 16),
-              Text('🔧 Problemas com a câmera:', style: TextStyle(fontWeight: FontWeight.bold)),
+              Text('✨ Dicas:', style: TextStyle(fontWeight: FontWeight.bold)),
               SizedBox(height: 8),
-              Text('• Volte e use "Tentar Carregar Câmera"'),
-              Text('• Verifique permissões nas configurações'),
-              Text('• Reinicie o app se necessário'),
+              Text('• Use a lanterna se estiver escuro'),
+              Text('• Mantenha distância de ~30cm do QR'),
+              Text('• O código será detectado automaticamente'),
             ],
           ),
         ),
@@ -1079,25 +731,21 @@ class _ScannerPageState extends State<ScannerPage>
     setState(() {
       isScanning = !isScanning;
       if (isScanning) {
-        controller?.resumeCamera();
-        _animationController.repeat();
+        _resumeScanning();
       } else {
-        controller?.pauseCamera();
-        _animationController.stop();
+        _pauseScanning();
       }
     });
   }
 
   void _toggleFlash() async {
-    if (controller != null) {
-      try {
-        await controller!.toggleFlash();
-        setState(() {
-          isFlashOn = !isFlashOn;
-        });
-      } catch (e) {
-        AppLogger.e('Erro ao alternar flash', e);
-      }
+    try {
+      await scannerController.toggleTorch();
+      setState(() {
+        isFlashOn = !isFlashOn;
+      });
+    } catch (e) {
+      AppLogger.e('Erro ao alternar flash', e);
     }
   }
 
@@ -1106,7 +754,12 @@ class _ScannerPageState extends State<ScannerPage>
       isScanning = true;
       isProcessingQR = false;
     });
-    controller?.resumeCamera();
+    scannerController.start();
     _animationController.repeat();
+  }
+
+  void _pauseScanning() {
+    scannerController.stop();
+    _animationController.stop();
   }
 }
