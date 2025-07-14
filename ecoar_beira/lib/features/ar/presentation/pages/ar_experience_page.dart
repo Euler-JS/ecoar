@@ -1,20 +1,13 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
-import 'package:audioplayers/audioplayers.dart';
-import 'package:ar_flutter_plugin/widgets/ar_view.dart';
-import 'package:ar_flutter_plugin/managers/ar_session_manager.dart';
-import 'package:ar_flutter_plugin/managers/ar_object_manager.dart';
-import 'package:ar_flutter_plugin/managers/ar_anchor_manager.dart';
-import 'package:ar_flutter_plugin/managers/ar_location_manager.dart';
-import 'package:ar_flutter_plugin/datatypes/config_planedetection.dart';
-import 'package:ar_flutter_plugin/datatypes/hittest_result_types.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:ecoar_beira/core/models/ar_scene_model.dart';
 import 'package:ecoar_beira/core/theme/app_theme.dart';
 import 'package:ecoar_beira/core/utils/logger.dart';
 import 'package:ecoar_beira/features/ar/data/repositories/ar_scene_repository.dart';
-import 'package:ecoar_beira/features/ar/domain/services/ar_service.dart';
 
 class RealARExperiencePage extends StatefulWidget {
   final String markerId;
@@ -31,32 +24,28 @@ class RealARExperiencePage extends StatefulWidget {
 class _RealARExperiencePageState extends State<RealARExperiencePage>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   
-  // Services
-  final ARService _arService = ARService.instance;
+  // Repositories
   final ARSceneRepository _sceneRepository = ARSceneRepository();
   
-  // AR Managers - unificados para ambas as plataformas
-  ARSessionManager? _arSessionManager;
-  ARObjectManager? _arObjectManager;
-  ARAnchorManager? _arAnchorManager;
-  ARLocationManager? _arLocationManager;
+  // Mobile Scanner (mesma tecnologia que funciona no QR)
+  late MobileScannerController _mobileScannerController;
   
   // Controllers
   late AnimationController _loadingController;
   late AnimationController _uiController;
-  StreamSubscription<AREvent>? _arEventSubscription;
-  
-  // Audio
-  final AudioPlayer _audioPlayer = AudioPlayer();
   
   // State
   bool _isLoading = true;
-  bool _isARReady = false;
+  bool _isReady = false;
   bool _showInstructions = true;
   bool _hasError = false;
   String _errorMessage = '';
   ARSceneModel? _currentScene;
   int _pointsEarned = 0;
+  
+  // AR Objects simulados
+  List<MockARObject> _mockObjects = [];
+  Timer? _objectSpawnTimer;
   
   // UI State
   bool _showUI = true;
@@ -67,49 +56,33 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     
-    // Lock orientation for AR
     SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
     ]);
     
     _setupAnimations();
-    _initializeAR();
+    _initializeExperience();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     
-    // Restore orientation
     SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
     ]);
     
     _cleanup();
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    switch (state) {
-      case AppLifecycleState.paused:
-        _arService.pauseSession();
-        break;
-      case AppLifecycleState.resumed:
-        _arService.resumeSession();
-        break;
-      default:
-        break;
-    }
-  }
-
   void _setupAnimations() {
     _loadingController = AnimationController(
       duration: const Duration(seconds: 2),
       vsync: this,
-    );
+    )..repeat();
     
     _uiController = AnimationController(
       duration: const Duration(milliseconds: 300),
@@ -117,34 +90,50 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     );
   }
 
-  Future<void> _initializeAR() async {
+  Future<void> _initializeExperience() async {
     try {
-      AppLogger.i('Initializing AR experience for marker: ${widget.markerId}');
+      AppLogger.i('Initializing Mobile Scanner AR experience for marker: ${widget.markerId}');
       
-      // Initialize AR Service
-      final initialized = await _arService.initialize();
-      if (!initialized) {
-        _showError('Falha ao inicializar AR');
-        return;
-      }
-
-      // Load scene for this marker
+      // Load scene
       await _loadScene();
-
-      // Subscribe to AR events
-      _subscribeToAREvents();
-
+      
+      // Initialize mobile scanner (tecnologia comprovada)
+      await _initializeMobileScanner();
+      
       setState(() {
         _isLoading = false;
-        _isARReady = true;
+        _isReady = true;
       });
 
       _uiController.forward();
       _startInstructionTimer();
+      _startMockARObjects();
 
     } catch (e, stackTrace) {
-      AppLogger.e('Error initializing AR', e, stackTrace);
-      _showError('Erro ao carregar experiência AR');
+      AppLogger.e('Error initializing experience', e, stackTrace);
+      _showError('Erro ao carregar experiência AR: $e');
+    }
+  }
+
+  Future<void> _initializeMobileScanner() async {
+    try {
+      AppLogger.i('Initializing mobile_scanner (same as working QR scanner)...');
+      
+      // Configuração EXATA do scanner QR que funciona
+      _mobileScannerController = MobileScannerController(
+        facing: CameraFacing.back,
+        torchEnabled: false,
+        returnImage: false,
+        formats: [BarcodeFormat.qrCode],
+      );
+      
+      await _mobileScannerController.start();
+      
+      AppLogger.i('Mobile scanner initialized successfully for AR!');
+      
+    } catch (e, stackTrace) {
+      AppLogger.e('Error initializing mobile scanner', e, stackTrace);
+      throw Exception('Falha ao inicializar câmera: $e');
     }
   }
 
@@ -164,95 +153,81 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     }
   }
 
-  void _subscribeToAREvents() {
-    _arEventSubscription = _arService.eventStream.listen((event) {
-      _handleAREvent(event);
+  void _startMockARObjects() {
+    _objectSpawnTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (_mockObjects.length < 6) {
+        _spawnMockObject();
+      }
     });
   }
 
-  void _handleAREvent(AREvent event) {
-    if (!mounted) return;
-
-    switch (event.runtimeType) {
-      case ARObjectTappedEvent:
-        final e = event as ARObjectTappedEvent;
-        _onObjectTapped(e.objectId);
-        break;
-      case ARPointsEarnedEvent:
-        final e = event as ARPointsEarnedEvent;
-        _onPointsEarned(e.points);
-        break;
-      case ARDialogRequestedEvent:
-        final e = event as ARDialogRequestedEvent;
-        _showInfoDialog(e.title, e.message);
-        break;
-      case ARSoundPlayedEvent:
-        final e = event as ARSoundPlayedEvent;
-        _playSound(e.soundId);
-        break;
-      case ARErrorEvent:
-        final e = event as ARErrorEvent;
-        _showError(e.message);
-        break;
-    }
-  }
-
-  void _onObjectTapped(String objectId) {
-    AppLogger.d('AR object tapped: $objectId');
-    _showTapFeedback();
-    _resetUITimer();
-  }
-
-  void _onPointsEarned(int points) {
-    setState(() {
-      _pointsEarned += points;
-    });
-    _showPointsAnimation(points);
-  }
-
-  void _showTapFeedback() {
-    HapticFeedback.lightImpact();
+  void _spawnMockObject() {
+    final random = Random();
+    final sceneObjects = _getSceneObjects();
     
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Objeto descoberto!'),
-        duration: const Duration(seconds: 2),
-        backgroundColor: AppTheme.successGreen,
-        behavior: SnackBarBehavior.floating,
+    final index = random.nextInt(sceneObjects.length);
+    final objectData = sceneObjects[index];
+    
+    final mockObject = MockARObject(
+      id: 'object_${DateTime.now().millisecondsSinceEpoch}',
+      emoji: objectData['emoji']!,
+      name: objectData['name']!,
+      description: objectData['description']!,
+      position: Offset(
+        random.nextDouble() * 280 + 50,
+        random.nextDouble() * 500 + 150,
       ),
+      scale: 0.7 + random.nextDouble() * 0.6,
+      points: objectData['points'] as int,
     );
-  }
-
-  void _showPointsAnimation(int points) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => PointsEarnedDialog(points: points),
-    ).then((_) {
-      Timer(const Duration(milliseconds: 1500), () {
-        if (mounted) Navigator.of(context).pop();
-      });
-    });
-  }
-
-  void _playSound(String soundId) async {
-    try {
-      await _audioPlayer.play(AssetSource('audio/$soundId.mp3'));
-    } catch (e) {
-      AppLogger.e('Error playing sound: $soundId', e);
-    }
-  }
-
-  void _showError(String message) {
+    
     setState(() {
-      _hasError = true;
-      _errorMessage = message;
-      _isLoading = false;
+      _mockObjects.add(mockObject);
     });
+    
+    // Auto-remove após 12 segundos
+    Timer(const Duration(seconds: 12), () {
+      if (mounted) {
+        setState(() {
+          _mockObjects.removeWhere((obj) => obj.id == mockObject.id);
+        });
+      }
+    });
+  }
+
+  List<Map<String, dynamic>> _getSceneObjects() {
+    switch (widget.markerId) {
+      case 'bacia1_001':
+        return [
+          {'emoji': '🌳', 'name': 'Baobá', 'description': 'Árvore da vida com mais de 1000 anos', 'points': 75},
+          {'emoji': '🐦', 'name': 'Bem-te-vi', 'description': 'Ave símbolo da biodiversidade local', 'points': 50},
+          {'emoji': '🌱', 'name': 'Strelitzia', 'description': 'Planta tropical endêmica', 'points': 40},
+          {'emoji': '🦋', 'name': 'Borboleta', 'description': 'Polinizador essencial do ecossistema', 'points': 30},
+        ];
+      case 'bacia2_001':
+        return [
+          {'emoji': '💧', 'name': 'Água Limpa', 'description': 'Recurso vital para a vida', 'points': 60},
+          {'emoji': '🌊', 'name': 'Ciclo da Água', 'description': 'Processo natural de renovação', 'points': 80},
+          {'emoji': '🐟', 'name': 'Peixe Nativo', 'description': 'Indicador de qualidade da água', 'points': 45},
+          {'emoji': '🪴', 'name': 'Aguapé', 'description': 'Planta aquática purificadora', 'points': 35},
+        ];
+      case 'bacia3_001':
+        return [
+          {'emoji': '🌾', 'name': 'Horta Urbana', 'description': 'Agricultura sustentável na cidade', 'points': 70},
+          {'emoji': '🥬', 'name': 'Vegetais', 'description': 'Alimentos frescos locais', 'points': 40},
+          {'emoji': '🏗️', 'name': 'Compostor', 'description': 'Sistema de reciclagem orgânica', 'points': 55},
+          {'emoji': '🌿', 'name': 'Ervas', 'description': 'Plantas medicinais tradicionais', 'points': 30},
+        ];
+      default:
+        return [
+          {'emoji': '🌍', 'name': 'Planeta', 'description': 'Nossa casa comum', 'points': 100},
+          {'emoji': '♻️', 'name': 'Reciclagem', 'description': 'Economia circular', 'points': 50},
+        ];
+    }
   }
 
   void _startInstructionTimer() {
-    Timer(const Duration(seconds: 8), () {
+    Timer(const Duration(seconds: 6), () {
       if (mounted) {
         setState(() {
           _showInstructions = false;
@@ -261,33 +236,14 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     });
   }
 
-  void _resetUITimer() {
-    _uiHideTimer?.cancel();
-    if (!_showUI) {
-      setState(() {
-        _showUI = true;
-      });
-      _uiController.forward();
-    }
-    
-    _uiHideTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted) {
-        setState(() {
-          _showUI = false;
-        });
-        _uiController.reverse();
-      }
-    });
-  }
-
   void _cleanup() async {
     try {
       _loadingController.dispose();
       _uiController.dispose();
-      _arEventSubscription?.cancel();
       _uiHideTimer?.cancel();
-      await _audioPlayer.dispose();
-      await _arService.stopSession();
+      _objectSpawnTimer?.cancel();
+      
+      _mobileScannerController.dispose();
     } catch (e) {
       AppLogger.e('Error during cleanup', e);
     }
@@ -298,8 +254,11 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     return Scaffold(
       body: Stack(
         children: [
-          // AR View - unificado para ambas as plataformas
-          _buildARView(),
+          // Camera background (mobile_scanner)
+          _buildCameraBackground(),
+          
+          // AR Objects overlay
+          if (_isReady) _buildMockARObjects(),
           
           // Loading overlay
           if (_isLoading) _buildLoadingOverlay(),
@@ -308,7 +267,7 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
           if (_hasError) _buildErrorOverlay(),
           
           // UI overlay
-          if (_isARReady && !_hasError) _buildUIOverlay(),
+          if (_isReady && !_hasError) _buildUIOverlay(),
           
           // Exit button
           _buildExitButton(),
@@ -317,61 +276,210 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     );
   }
 
-  Widget _buildARView() {
-    return ARView(
-      onARViewCreated: _onARViewCreated,
-      planeDetectionConfig: PlaneDetectionConfig.horizontalAndVertical,
+  Widget _buildCameraBackground() {
+    return SizedBox.expand(
+      child: MobileScanner(
+        controller: _mobileScannerController,
+        onDetect: (capture) {
+          // Camera rodando mas não detectando QR codes 
+          // Apenas fornecendo fundo da câmera para objetos AR
+        },
+        overlay: Container(), // Overlay transparente para objetos AR
+      ),
     );
   }
 
-  void _onARViewCreated(
-    ARSessionManager arSessionManager,
-    ARObjectManager arObjectManager,
-    ARAnchorManager arAnchorManager,
-    ARLocationManager arLocationManager,
-  ) {
-    _arSessionManager = arSessionManager;
-    _arObjectManager = arObjectManager;
-    _arAnchorManager = arAnchorManager;
-    _arLocationManager = arLocationManager;
-
-    // Configure the AR service with these managers
-    _arService.configureManagers(
-      sessionManager: arSessionManager,
-      objectManager: arObjectManager,
-      anchorManager: arAnchorManager,
-      locationManager: arLocationManager,
+  Widget _buildMockARObjects() {
+    return Stack(
+      children: _mockObjects.map((obj) => _buildMockObject(obj)).toList(),
     );
-
-    // Start AR session and load scene
-    _startARSession();
   }
 
-  Future<void> _startARSession() async {
-    try {
-      // Start AR session
-      final sessionStarted = await _arService.startSession(
-        enablePlaneDetection: true,
-        enableLightEstimation: true,
-        enableImageTracking: false,
-      );
-      
-      if (!sessionStarted) {
-        _showError('Falha ao iniciar sessão AR');
-        return;
+  Widget _buildMockObject(MockARObject obj) {
+    return Positioned(
+      left: obj.position.dx,
+      top: obj.position.dy,
+      child: GestureDetector(
+        onTap: () => _onMockObjectTapped(obj),
+        child: TweenAnimationBuilder<double>(
+          duration: const Duration(milliseconds: 800),
+          tween: Tween(begin: 0.0, end: 1.0),
+          builder: (context, value, child) {
+            return Transform.scale(
+              scale: obj.scale * value,
+              child: Container(
+                width: 70,
+                height: 70,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.95),
+                  borderRadius: BorderRadius.circular(35),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.primaryGreen.withOpacity(0.4),
+                      blurRadius: 15,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                  border: Border.all(
+                    color: AppTheme.primaryGreen.withOpacity(0.6),
+                    width: 2,
+                  ),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      obj.emoji,
+                      style: const TextStyle(fontSize: 28),
+                    ),
+                    Text(
+                      obj.name,
+                      style: const TextStyle(
+                        fontSize: 8, 
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.primaryGreen,
+                      ),
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  void _onMockObjectTapped(MockARObject obj) {
+    HapticFeedback.lightImpact();
+    
+    setState(() {
+      _pointsEarned += obj.points;
+      _mockObjects.removeWhere((o) => o.id == obj.id);
+    });
+    
+    _showPointsAnimation(obj.points);
+    _showObjectInfoDialog(obj);
+  }
+
+  void _showPointsAnimation(int points) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Center(
+        child: TweenAnimationBuilder<double>(
+          duration: const Duration(milliseconds: 1200),
+          tween: Tween(begin: 0.0, end: 1.0),
+          builder: (context, value, child) {
+            return Transform.scale(
+              scale: value,
+              child: Container(
+                padding: const EdgeInsets.all(32),
+                decoration: BoxDecoration(
+                  color: AppTheme.successGreen,
+                  borderRadius: BorderRadius.circular(25),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.successGreen.withOpacity(0.4),
+                      blurRadius: 25,
+                      offset: const Offset(0, 15),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.stars, color: Colors.white, size: 56),
+                    const SizedBox(height: 20),
+                    Text(
+                      '+$points',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 36,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Text(
+                      'pontos!',
+                      style: TextStyle(color: Colors.white, fontSize: 18),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+
+    Timer(const Duration(milliseconds: 1800), () {
+      if (mounted) Navigator.of(context).pop();
+    });
+  }
+
+  void _showObjectInfoDialog(MockARObject obj) {
+    Timer(const Duration(milliseconds: 2000), () {
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Row(
+              children: [
+                Text(obj.emoji, style: const TextStyle(fontSize: 24)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    obj.name,
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  obj.description,
+                  style: const TextStyle(fontSize: 16),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryGreen.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.eco, color: AppTheme.primaryGreen),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Você ganhou ${obj.points} pontos!',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.primaryGreen,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Continuar Explorando'),
+              ),
+            ],
+          ),
+        );
       }
-
-      // Load the scene
-      if (_currentScene != null) {
-        await _arService.loadScene(_currentScene!);
-      }
-
-      AppLogger.i('AR session started and scene loaded');
-
-    } catch (e, stackTrace) {
-      AppLogger.e('Error starting AR session', e, stackTrace);
-      _showError('Erro ao inicializar experiência AR');
-    }
+    });
   }
 
   Widget _buildLoadingOverlay() {
@@ -391,7 +499,7 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
                   borderRadius: BorderRadius.circular(40),
                 ),
                 child: const Icon(
-                  Icons.view_in_ar,
+                  Icons.camera_alt,
                   size: 40,
                   color: Colors.white,
                 ),
@@ -399,7 +507,7 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
             ),
             const SizedBox(height: 24),
             const Text(
-              'Carregando Experiência AR...',
+              'Inicializando Experiência AR...',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 18,
@@ -412,6 +520,15 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
               style: const TextStyle(
                 color: Colors.white70,
                 fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Usando tecnologia Mobile Scanner',
+              style: TextStyle(
+                color: AppTheme.primaryGreen,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 24),
@@ -474,7 +591,7 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
                         _hasError = false;
                         _isLoading = true;
                       });
-                      _initializeAR();
+                      _initializeExperience();
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppTheme.primaryGreen,
@@ -495,15 +612,9 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
       opacity: _uiController,
       child: Column(
         children: [
-          // Top info bar
           _buildTopInfoBar(),
-          
           const Spacer(),
-          
-          // Instructions
           if (_showInstructions) _buildInstructions(),
-          
-          // Bottom action bar
           _buildBottomActionBar(),
         ],
       ),
@@ -543,12 +654,32 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              Text(
-                'Marker: ${widget.markerId}',
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 12,
-                ),
+              Row(
+                children: [
+                  Text(
+                    'Marker: ${widget.markerId}',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryBlue,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'Mobile Scanner AR',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -581,7 +712,7 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
         borderRadius: BorderRadius.circular(12),
       ),
       child: const Text(
-        'Aponte a câmera para superfícies planas e toque nos objetos 3D para interagir!',
+        'Objetos educativos aparecerão automaticamente na tela - toque neles para aprender e ganhar pontos!',
         style: TextStyle(
           color: Colors.white,
           fontSize: 14,
@@ -608,26 +739,10 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _buildActionButton(
-            Icons.camera_alt,
-            'Foto',
-            () => _takeARPhoto(),
-          ),
-          _buildActionButton(
-            Icons.info_outline,
-            'Info',
-            () => _showSceneInfo(),
-          ),
-          _buildActionButton(
-            Icons.quiz,
-            'Quiz',
-            () => _startQuiz(),
-          ),
-          _buildActionButton(
-            Icons.refresh,
-            'Reset',
-            () => _resetScene(),
-          ),
+          _buildActionButton(Icons.camera_alt, 'Foto', () => _takePhoto()),
+          _buildActionButton(Icons.info_outline, 'Info', () => _showSceneInfo()),
+          _buildActionButton(Icons.quiz, 'Quiz', () => _startQuiz()),
+          _buildActionButton(Icons.refresh, 'Reset', () => _resetScene()),
         ],
       ),
     );
@@ -673,27 +788,25 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
         ),
         child: IconButton(
           icon: const Icon(Icons.close, color: Colors.white),
-          onPressed: () => _exitAR(),
+          onPressed: () => _exitExperience(),
         ),
       ),
     );
   }
 
-  void _takeARPhoto() async {
+  void _takePhoto() async {
     try {
-      AppLogger.d('Taking AR photo');
       HapticFeedback.mediumImpact();
       
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Foto AR capturada!'),
+          content: Text('📸 Foto Mobile Scanner AR capturada!'),
           backgroundColor: AppTheme.successGreen,
         ),
       );
       
-      _resetUITimer();
     } catch (e) {
-      AppLogger.e('Error taking AR photo', e);
+      AppLogger.e('Error taking photo', e);
     }
   }
 
@@ -703,7 +816,54 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (context) => ARSceneInfoBottomSheet(scene: _currentScene!),
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _currentScene!.name,
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _currentScene!.description,
+                style: const TextStyle(fontSize: 16, color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  const Icon(Icons.camera_alt, color: AppTheme.primaryGreen),
+                  const SizedBox(width: 8),
+                  const Text('Mobile Scanner AR Ativo'),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.timeline, color: AppTheme.primaryBlue),
+                  const SizedBox(width: 8),
+                  Text('${_mockObjects.length} objetos na tela'),
+                ],
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Fechar'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -715,16 +875,12 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     try {
       setState(() {
         _pointsEarned = 0;
+        _mockObjects.clear();
       });
-      
-      await _arService.clearScene();
-      if (_currentScene != null) {
-        await _arService.loadScene(_currentScene!);
-      }
       
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Cena reiniciada!'),
+          content: Text('🔄 Experiência reiniciada!'),
           backgroundColor: AppTheme.primaryBlue,
         ),
       );
@@ -733,23 +889,7 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     }
   }
 
-  void _showInfoDialog(String title, String message) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _exitAR() {
+  void _exitExperience() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -771,189 +911,32 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
       ),
     );
   }
+
+  void _showError(String message) {
+    setState(() {
+      _hasError = true;
+      _errorMessage = message;
+      _isLoading = false;
+    });
+  }
 }
 
-// Supporting widgets remain the same
-class PointsEarnedDialog extends StatefulWidget {
+class MockARObject {
+  final String id;
+  final String emoji;
+  final String name;
+  final String description;
+  final Offset position;
+  final double scale;
   final int points;
-  
-  const PointsEarnedDialog({super.key, required this.points});
 
-  @override
-  State<PointsEarnedDialog> createState() => _PointsEarnedDialogState();
-}
-
-class _PointsEarnedDialogState extends State<PointsEarnedDialog>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
-  late Animation<double> _rotationAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 1200),
-      vsync: this,
-    );
-    
-    _scaleAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.elasticOut),
-    );
-    
-    _rotationAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
-    
-    _controller.forward();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, child) {
-          return Transform.scale(
-            scale: _scaleAnimation.value,
-            child: Transform.rotate(
-              angle: _rotationAnimation.value * 0.1,
-              child: Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: AppTheme.successGreen,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppTheme.successGreen.withOpacity(0.3),
-                      blurRadius: 20,
-                      offset: const Offset(0, 10),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.stars,
-                      color: Colors.white,
-                      size: 48,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      '+${widget.points}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Text(
-                      'pontos!',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class ARSceneInfoBottomSheet extends StatelessWidget {
-  final ARSceneModel scene;
-  
-  const ARSceneInfoBottomSheet({super.key, required this.scene});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Handle
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            
-            // Title
-            Text(
-              scene.name,
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            
-            // Description
-            Text(
-              scene.description,
-              style: const TextStyle(
-                fontSize: 16,
-                color: Colors.grey,
-              ),
-            ),
-            const SizedBox(height: 20),
-            
-            // Objects count
-            Row(
-              children: [
-                const Icon(Icons.view_in_ar, color: AppTheme.primaryGreen),
-                const SizedBox(width: 8),
-                Text('${scene.objects.length} objetos AR'),
-              ],
-            ),
-            const SizedBox(height: 8),
-            
-            // Duration
-            Row(
-              children: [
-                const Icon(Icons.timer, color: AppTheme.primaryBlue),
-                const SizedBox(width: 8),
-                Text('Duração: ${scene.maxDuration.inMinutes} min'),
-              ],
-            ),
-            const SizedBox(height: 20),
-            
-            // Close button
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Fechar'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  MockARObject({
+    required this.id,
+    required this.emoji,
+    required this.name,
+    required this.description,
+    required this.position,
+    required this.scale,
+    required this.points,
+  });
 }
