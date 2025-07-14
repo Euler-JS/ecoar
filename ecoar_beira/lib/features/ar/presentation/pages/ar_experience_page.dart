@@ -28,7 +28,7 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
   final ARSceneRepository _sceneRepository = ARSceneRepository();
   
   // Mobile Scanner (mesma tecnologia que funciona no QR)
-  late MobileScannerController _mobileScannerController;
+  MobileScannerController? _mobileScannerController;
   
   // Controllers
   late AnimationController _loadingController;
@@ -70,8 +70,8 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     WidgetsBinding.instance.removeObserver(this);
     
     SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.portraitUp,
     ]);
     
     _cleanup();
@@ -119,6 +119,8 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     try {
       AppLogger.i('Initializing mobile_scanner (same as working QR scanner)...');
       
+      await Future.delayed(const Duration(milliseconds: 1500));
+
       // Configuração EXATA do scanner QR que funciona
       _mobileScannerController = MobileScannerController(
         facing: CameraFacing.back,
@@ -127,9 +129,11 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
         formats: [BarcodeFormat.qrCode],
       );
       
-      await _mobileScannerController.start();
+      await _mobileScannerController!.start();
       
       AppLogger.i('Mobile scanner initialized successfully for AR!');
+
+      if (!mounted) return;
       
     } catch (e, stackTrace) {
       AppLogger.e('Error initializing mobile scanner', e, stackTrace);
@@ -243,7 +247,12 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
       _uiHideTimer?.cancel();
       _objectSpawnTimer?.cancel();
       
-      _mobileScannerController.dispose();
+      if (_mobileScannerController != null) {
+        _mobileScannerController!.dispose();
+        _mobileScannerController = null;
+      }
+      
+      AppLogger.i('AR Experience cleanup completed successfully.');
     } catch (e) {
       AppLogger.e('Error during cleanup', e);
     }
@@ -277,9 +286,20 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
   }
 
   Widget _buildCameraBackground() {
+    if (_mobileScannerController == null) {
+    return Container(
+      color: Colors.black,
+      child: const Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryGreen),
+        ),
+      ),
+    );
+  }
+
     return SizedBox.expand(
       child: MobileScanner(
-        controller: _mobileScannerController,
+        controller: _mobileScannerController!,
         onDetect: (capture) {
           // Camera rodando mas não detectando QR codes 
           // Apenas fornecendo fundo da câmera para objetos AR
@@ -901,12 +921,17 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
             child: const Text('Cancelar'),
           ),
           TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
+          onPressed: () {
+            Navigator.of(context).pop(); // Remove o diálogo
+            // Verificar se pode fazer pop, senão vai para home
+            if (Navigator.of(context).canPop()) {
               context.pop();
-            },
-            child: const Text('Sair'),
-          ),
+            } else {
+              context.go('/home'); // Vai para home se não pode fazer pop
+            }
+          },
+          child: const Text('Sair'),
+        ),
         ],
       ),
     );

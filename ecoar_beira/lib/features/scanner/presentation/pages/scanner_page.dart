@@ -97,7 +97,11 @@ class _ScannerPageState extends State<ScannerPage>
         formats: [BarcodeFormat.qrCode],
       );
 
-      await scannerController.start();
+      if (!scannerController.isStarting) {
+        await scannerController.start();
+      } else {
+        AppLogger.i('Mobile scanner já estava iniciado');
+      }
       
       setState(() {
         _isInitialized = true;
