@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:ecoar_beira/features/plant_identification/pages/plant_identification_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -723,51 +724,115 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     );
   }
 
-  Widget _buildInstructions() {
-    return Container(
-      margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.8),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: const Text(
-        'Objetos educativos aparecerão automaticamente na tela - toque neles para aprender e ganhar pontos!',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 14,
+ Widget _buildInstructions() {
+  return Container(
+    margin: const EdgeInsets.all(16),
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: Colors.black.withOpacity(0.8),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Column(
+      children: [
+        const Text(
+          'Objetos educativos aparecerão automaticamente na tela - toque neles para aprender e ganhar pontos!',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+          ),
+          textAlign: TextAlign.center,
         ),
-        textAlign: TextAlign.center,
-      ),
-    );
-  }
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: AppTheme.primaryGreen.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.nature, color: AppTheme.primaryGreen, size: 16),
+              SizedBox(width: 8),
+              Text(
+                'Use o botão "Plantas" para identificar plantas reais!',
+                style: TextStyle(
+                  color: AppTheme.primaryGreen,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
   Widget _buildBottomActionBar() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.bottomCenter,
-          end: Alignment.topCenter,
-          colors: [
-            Colors.black.withOpacity(0.7),
-            Colors.transparent,
-          ],
-        ),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _buildActionButton(Icons.camera_alt, 'Foto', () => _takePhoto()),
-          _buildActionButton(Icons.info_outline, 'Info', () => _showSceneInfo()),
-          _buildActionButton(Icons.quiz, 'Quiz', () => _startQuiz()),
-          _buildActionButton(Icons.refresh, 'Reset', () => _resetScene()),
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.bottomCenter,
+        end: Alignment.topCenter,
+        colors: [
+          Colors.black.withOpacity(0.7),
+          Colors.transparent,
         ],
       ),
-    );
-  }
+    ),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        _buildActionButton(Icons.camera_alt, 'Foto', () => _takePhoto()),
+        _buildActionButton(Icons.nature, 'Plantas', () => _identifyPlant()),  // NOVO
+        _buildActionButton(Icons.info_outline, 'Info', () => _showSceneInfo()),
+        _buildActionButton(Icons.quiz, 'Quiz', () => _startQuiz()),
+        _buildActionButton(Icons.refresh, 'Reset', () => _resetScene()),
+      ],
+    ),
+  );
+}
 
+void _identifyPlant() {
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => const PlantIdentificationPage(),
+    ),
+  ).then((_) {
+    // Retomar sessão AR quando voltar
+    if (mounted) {
+      _resumeARSession();
+    }
+  });
+}
+
+void _pauseARSession() {
+  try {
+    if (_mobileScannerController != null) {
+      _mobileScannerController!.stop();
+    }
+    _objectSpawnTimer?.cancel();
+  } catch (e) {
+    AppLogger.e('Error pausing AR session', e);
+  }
+}
+
+
+void _resumeARSession() async {
+  try {
+    if (_mobileScannerController != null) {
+      await _mobileScannerController!.start();
+    }
+    _startMockARObjects();
+  } catch (e) {
+    AppLogger.e('Error resuming AR session', e);
+  }
+}
   Widget _buildActionButton(IconData icon, String label, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
@@ -831,61 +896,90 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
   }
 
   void _showSceneInfo() {
-    if (_currentScene == null) return;
-    
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _currentScene!.name,
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _currentScene!.description,
-                style: const TextStyle(fontSize: 16, color: Colors.grey),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  const Icon(Icons.camera_alt, color: AppTheme.primaryGreen),
-                  const SizedBox(width: 8),
-                  const Text('Mobile Scanner AR Ativo'),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Icon(Icons.timeline, color: AppTheme.primaryBlue),
-                  const SizedBox(width: 8),
-                  Text('${_mockObjects.length} objetos na tela'),
-                ],
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Fechar'),
+  if (_currentScene == null) return;
+  
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (context) => Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _currentScene!.name,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _currentScene!.description,
+              style: const TextStyle(fontSize: 16, color: Colors.grey),
+            ),
+            const SizedBox(height: 20),
+            
+            // Informações do AR ativo
+            Row(
+              children: [
+                const Icon(Icons.camera_alt, color: AppTheme.primaryGreen),
+                const SizedBox(width: 8),
+                const Text('Mobile Scanner AR Ativo'),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.timeline, color: AppTheme.primaryBlue),
+                const SizedBox(width: 8),
+                Text('${_mockObjects.length} objetos na tela'),
+              ],
+            ),
+            const SizedBox(height: 8),
+            
+            // NOVO: Identificação de plantas real
+            Row(
+              children: [
+                const Icon(Icons.nature, color: AppTheme.successGreen),
+                const SizedBox(width: 8),
+                const Text('Identificação de plantas disponível'),
+              ],
+            ),
+            
+            const SizedBox(height: 20),
+            
+            // Botões de ação
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      _identifyPlant();
+                    },
+                    icon: const Icon(Icons.nature),
+                    label: const Text('Identificar Plantas'),
+                  ),
                 ),
-              ),
-            ],
-          ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Fechar'),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   void _startQuiz() {
     context.go('/challenge/ar_quiz_${widget.markerId}');
