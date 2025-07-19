@@ -37,7 +37,7 @@ class _PlantIdentificationPageState extends State<PlantIdentificationPage>
   
   // Seleções do usuário
   PlantOrgan _selectedOrgan = PlantOrgan.leaf;
-  List<PlantModifier> _selectedModifiers = [PlantModifier.planted];
+  // List<PlantModifier> _selectedModifiers = [PlantModifier.planted];
   
   // Animações
   late AnimationController _cameraAnimationController;
@@ -51,7 +51,7 @@ class _PlantIdentificationPageState extends State<PlantIdentificationPage>
     WidgetsBinding.instance.addObserver(this);
     
     // TODO: Adicionar sua API key aqui
-    _plantNetService = PlantNetService(apiKey: 'YOUR_PLANTNET_API_KEY');
+    _plantNetService = PlantNetService(apiKey: '2b10bwe4u45Lof4wYURX1xAO');
     
     _setupAnimations();
     _initializeCamera();
@@ -549,7 +549,7 @@ class _PlantIdentificationPageState extends State<PlantIdentificationPage>
       final result = await _plantNetService.identifyPlant(
         imageFile: File(imageFile.path),
         organ: _selectedOrgan,
-        modifiers: _selectedModifiers,
+        // modifiers: _selectedModifiers,
       );
 
       if (mounted) {

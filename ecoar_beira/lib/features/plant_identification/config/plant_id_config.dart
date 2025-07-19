@@ -5,7 +5,7 @@ class PlantIdConfig {
   static const String plantNetApiKey = '2b10bwe4u45Lof4wYURX1xAO';
   
   // Configurações da API
-  static const String plantNetProject = 'weurope'; // ou 'world' para cobertura global
+  static const String plantNetProject = 'all'; // ou 'world' para cobertura global
   static const int maxResults = 5;
   static const int timeoutSeconds = 30;
   
@@ -25,7 +25,7 @@ class PlantIdConfig {
   static const double cornerIndicatorSize = 30.0;
   
   // Validação da configuração
-  static bool get isConfigured => plantNetApiKey != 'YOUR_PLANTNET_API_KEY_HERE';
+  static bool get isConfigured => plantNetApiKey != '2b10bwe4u45Lof4wYURX1xAO';
   
   static void validateConfiguration() {
     if (!isConfigured) {
