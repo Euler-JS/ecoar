@@ -76,6 +76,7 @@ flutter:
     - assets/lottie/
     - assets/audio/
     - assets/ar_models/
+    - assets/ar_models/scene.gltf
     
   fonts:
     - family: Poppins
