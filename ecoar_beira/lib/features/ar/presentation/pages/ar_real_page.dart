@@ -32,18 +32,125 @@ class _RealARPageState extends State<RealARPage> {
   List<ARPlaneAnchor> anchors = <ARPlaneAnchor>[];
   String _info = 'Toque na tela para colocar objeto AR';
   bool _isObjectPlaced = false;
+  
+  // Lista de modelos disponíveis
+  final List<ARModelInfo> _availableModels = [
+    ARModelInfo(
+      name: "Árvore",
+      icon: "🌳",
+      uri: "assets/ar_models/Bem_vindo_ao_EcoAR__0725105815_texture.glb",
+     scale: Vector3(100.0, 100.0, 100.0), // Aumentando a escala para um tamanho médio
+    //  position: Vector3(0.0, 0.0, 0.0),
+  // rotation: treeModel.rotation,
+    ),
+    ARModelInfo(
+      name: "Flor",
+      icon: "🌸",
+      uri: "assets/ar_models/Bem_vindo_ao_EcoAR__0725110411_texture.glb",
+      scale: Vector3(100.0, 100.0, 100.0),
+      // position: Vector3(0.2, 0.0, 0.2),
+    ),
+    // ARModelInfo(
+    //   name: "Irrigação",
+    //   icon: "💧",
+    //   uri: "assets/ar_models/Irrigation_Symphony_07251107_texture.glb",
+    //   scale: Vector3(0.8, 0.8, 0.8),
+    // ),
+    // ARModelInfo(
+    //   name: "Cultivador",
+    //   icon: "🍄",
+    //   uri: "assets/ar_models/Mushroom_grower_machine.usdz",
+    //   scale: Vector3(0.7, 0.7, 0.7),
+    // ),
+    // ARModelInfo(
+    //   name: "Ambiente",
+    //   icon: "🌿",
+    //   uri: "assets/ar_models/Vertical_Farm_Abundan_07251150_texture.glb",
+    //   scale: Vector3(0.9, 0.9, 0.9),
+    // ),
+  ];
+  
+  // Modelo selecionado atualmente
+  ARModelInfo? _selectedModel;
+
+  @override
+  void initState() {
+    super.initState();
+    // Define o modelo padrão
+    _selectedModel = _availableModels[0];
+    
+    // Inicia um timer para colocar os modelos automaticamente após inicialização da câmera AR
+    Future.delayed(const Duration(seconds: 2), () {
+      _autoPlaceInitialModels();
+    });
+  }
 
   @override
   void dispose() {
     super.dispose();
     arSessionManager?.dispose();
   }
+  
+  // Coloca os dois primeiros modelos automaticamente quando a tela abre
+  Future<void> _autoPlaceInitialModels() async {
+    if (arSessionManager != null && arObjectManager != null) {
+      setState(() {
+        _info = '🔍 Detectando superfície automáticamente...';
+      });
+      
+      // Espera por planos detectados
+      await Future.delayed(const Duration(seconds: 2));
+      
+      // Se não temos âncoras, criamos uma virtual
+      if (anchors.isEmpty) {
+        // Cria uma âncora no centro da visualização
+        var centerAnchor = ARPlaneAnchor(
+          transformation: Matrix4.identity()
+            ..setTranslation(Vector3(0.0, -0.5, -2.0)), // Posiciona à frente da câmera
+        );
+        
+        bool? didAddAnchor = await arAnchorManager!.addAnchor(centerAnchor);
+        if (didAddAnchor!) {
+          anchors.add(centerAnchor);
+          
+          // Coloca a árvore com escala maior para garantir visibilidade
+          var treeModel = _availableModels[0];
+          _availableModels[0] = ARModelInfo(
+            name: treeModel.name,
+            icon: treeModel.icon,
+            uri: treeModel.uri,
+            scale: Vector3(50, 50, 50), // Aumenta escala para visibilidade
+            position: Vector3(0.0, 0.0, 0.0),
+            rotation: treeModel.rotation,
+          );
+          await _addNode(centerAnchor, _availableModels[0]);
+          
+          // Coloca a flor ao lado
+          var flowerModel = _availableModels[1];
+          _availableModels[1] = ARModelInfo(
+            name: flowerModel.name,
+            icon: flowerModel.icon,
+            uri: flowerModel.uri,
+            scale: Vector3(50, 50, 50), // Aumenta escala para visibilidade
+            position: Vector3(5, 0.0, 0.0), // Posiciona ao lado da árvore
+            rotation: flowerModel.rotation,
+          );
+          await _addNode(centerAnchor, _availableModels[1]);
+          
+          setState(() {
+            _info = '✅ Bem-vindo ao EcoAR! Toque nos botões para adicionar mais modelos';
+            _isObjectPlaced = true;
+          });
+        }
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('🌱 AR Real'),
+        title: const Text('🌱 EcoAR'),
         backgroundColor: Colors.green,
         actions: [
           IconButton(
@@ -61,45 +168,75 @@ class _RealARPageState extends State<RealARPage> {
             planeDetectionConfig: PlaneDetectionConfig.horizontal,
           ),
           Positioned(
-            top: 20,
+            bottom: 20,
             left: 20,
             right: 20,
             child: Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.black87,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.5),
+                    blurRadius: 10,
+                    spreadRadius: 2,
+                  ),
+                ],
               ),
               child: Column(
                 children: [
                   Text(
                     _info,
-                    style: const TextStyle(color: Colors.white),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      ElevatedButton(
-                        onPressed: _onPlantTree,
-                        child: const Text('🌳 Plantar'),
-                      ),
-                      ElevatedButton(
-                        onPressed: _onPlaceFlower,
-                        child: const Text('🌸 Flor'),
-                      ),
-                      ElevatedButton(
-                        onPressed: _onLoadGLTF,
-                        child: const Text('📦 GLTF'),
-                      ),
-                    ],
-                  ),
+                  const SizedBox(height: 12),
+                  // Row(
+                  //   mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  //   children: [
+                  //     _buildModelButton(_availableModels[0]), // Árvore
+                  //     const SizedBox(width: 20),
+                  //     _buildModelButton(_availableModels[1]), // Flor
+                  //   ],
+                  // ),
                 ],
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+  
+  // Cria um botão destacado para um modelo
+  Widget _buildModelButton(ARModelInfo model) {
+    return ElevatedButton.icon(
+      onPressed: () {
+        setState(() {
+          _selectedModel = model;
+        });
+        _onPlaceSelectedModel();
+      },
+      icon: Text(
+        model.icon, 
+        style: const TextStyle(fontSize: 24),
+      ),
+      label: Text(
+        model.name,
+        style: const TextStyle(fontSize: 16),
+      ),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.green,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
       ),
     );
   }
@@ -133,7 +270,12 @@ class _RealARPageState extends State<RealARPage> {
     this.arObjectManager!.onRotationEnd = _onRotationEnded;
 
     setState(() {
-      _info = '✅ AR Iniciado! Toque numa superfície';
+      _info = '✅ AR Iniciado! Os modelos aparecerão automaticamente';
+    });
+    
+    // Inicia o processo de colocação automática após detectar planos
+    Future.delayed(const Duration(seconds: 2), () {
+      _autoPlaceInitialModels();
     });
   }
 
@@ -145,98 +287,65 @@ class _RealARPageState extends State<RealARPage> {
       
       if (didAddAnchor!) {
         this.anchors.add(newAnchor);
-        // Por padrão, adiciona uma árvore
-        await _addTreeNode(newAnchor);
-        setState(() {
-          _info = '🎯 Objeto colocado! Arraste ou rotacione';
-          _isObjectPlaced = true;
-        });
+        // Coloca o modelo selecionado
+        if (_selectedModel != null) {
+          await _addNode(newAnchor, _selectedModel!);
+          setState(() {
+            _info = '🎯 Objeto colocado! Arraste ou rotacione';
+            _isObjectPlaced = true;
+          });
+        }
       }
     }
   }
 
-  Future<void> _onPlantTree() async {
-    if (anchors.isNotEmpty) {
-      var lastAnchor = anchors.last;
-      await _addTreeNode(lastAnchor);
-    } else {
+  Future<void> _onPlaceSelectedModel() async {
+    if (_selectedModel == null) {
+      setState(() {
+        _info = '❌ Selecione um modelo primeiro';
+      });
+      return;
+    }
+    
+    if (anchors.isEmpty) {
       setState(() {
         _info = '❌ Toque numa superfície primeiro';
       });
-    }
-  }
-
-  Future<void> _onPlaceFlower() async {
-    if (anchors.isNotEmpty) {
+    } else {
       var lastAnchor = anchors.last;
-      await _addFlowerNode(lastAnchor);
-    } else {
+      await _addNode(lastAnchor, _selectedModel!);
       setState(() {
-        _info = '❌ Toque numa superfície primeiro';
+        _info = '✅ ${_selectedModel!.icon} ${_selectedModel!.name} colocado!';
       });
     }
   }
 
-  Future<void> _onLoadGLTF() async {
-    if (anchors.isNotEmpty) {
-      var lastAnchor = anchors.last;
-      await _addGLTFNode(lastAnchor);
-    } else {
+  Future<void> _addNode(ARPlaneAnchor anchor, ARModelInfo modelInfo) async {
+    try {
+      // Cria o nó AR com o modelo selecionado
+      var newNode = ARNode(
+        type: NodeType.localGLTF2,
+        uri: modelInfo.uri,
+        scale: modelInfo.scale,
+        position: modelInfo.position ?? Vector3(0.0, 0.0, 0.0),
+        rotation: modelInfo.rotation ?? Vector4(1.0, 0.0, 0.0, 0.0),
+      );
+
+      bool? didAddNodeToAnchor = await this.arObjectManager!.addNode(newNode, planeAnchor: anchor);
+      if (didAddNodeToAnchor!) {
+        this.nodes.add(newNode);
+        setState(() {
+          _info = '✅ ${modelInfo.icon} ${modelInfo.name} adicionado!';
+        });
+      } else {
+        setState(() {
+          _info = '❌ Erro ao carregar modelo';
+        });
+      }
+    } catch (e) {
+      print("Erro ao adicionar nó: $e");
       setState(() {
-        _info = '❌ Toque numa superfície primeiro';
-      });
-    }
-  }
-
-  Future<void> _addTreeNode(ARPlaneAnchor anchor) async {
-    var newNode = ARNode(
-      type: NodeType.webGLB,
-      uri: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb", // Você pode converter seu GLTF para GLB
-      scale: Vector3(0.5, 0.5, 0.5),
-      position: Vector3(0.0, 0.0, 0.0),
-      rotation: Vector4(1.0, 0.0, 0.0, 0.0),
-    );
-
-    bool? didAddNodeToAnchor = await this.arObjectManager!.addNode(newNode, planeAnchor: anchor);
-    if (didAddNodeToAnchor!) {
-      this.nodes.add(newNode);
-    }
-  }
-
-  Future<void> _addFlowerNode(ARPlaneAnchor anchor) async {
-    var newNode = ARNode(
-      type: NodeType.localGLTF2,
-      uri: "assets/ar_models/scene.gltf",
-      scale: Vector3(0.3, 0.3, 0.3),
-      position: Vector3(0.2, 0.0, 0.2),
-      rotation: Vector4(0.0, 1.0, 0.0, 0.0),
-    );
-
-    bool? didAddNodeToAnchor = await this.arObjectManager!.addNode(newNode, planeAnchor: anchor);
-    if (didAddNodeToAnchor!) {
-      this.nodes.add(newNode);
-    }
-  }
-
-  Future<void> _addGLTFNode(ARPlaneAnchor anchor) async {
-    // Carrega seu GLTF da URL
-    var newNode = ARNode(
-      type: NodeType.webGLB,
-      uri: "https://euler-js.github.io/files_test/scene.gltf",
-      scale: Vector3(0.1, 0.1, 0.1), // Ajuste a escala conforme necessário
-      position: Vector3(0.0, 0.0, 0.0),
-      rotation: Vector4(1.0, 0.0, 0.0, 0.0),
-    );
-
-    bool? didAddNodeToAnchor = await this.arObjectManager!.addNode(newNode, planeAnchor: anchor);
-    if (didAddNodeToAnchor!) {
-      this.nodes.add(newNode);
-      setState(() {
-        _info = '📦 Modelo GLTF carregado!';
-      });
-    } else {
-      setState(() {
-        _info = '❌ Erro ao carregar GLTF';
+        _info = '❌ Erro ao carregar modelo: $e';
       });
     }
   }
@@ -274,16 +383,34 @@ class _RealARPageState extends State<RealARPage> {
   }
 
   _onRemoveEverything() async {
-    /*nodes.forEach((node) {
-      this.arObjectManager!.removeNode(node);
-    });*/
+    // Remove todos os nós e âncoras
     for (var anchor in anchors) {
       arAnchorManager!.removeAnchor(anchor);
     }
     anchors.clear();
+    nodes.clear();
     setState(() {
       _info = '🗑️ Tudo removido! Toque para recolocar';
       _isObjectPlaced = false;
     });
   }
+}
+
+// Classe para armazenar informações dos modelos AR
+class ARModelInfo {
+  final String name;
+  final String icon;
+  final String uri;
+  final Vector3 scale;
+  final Vector3? position;
+  final Vector4? rotation;
+  
+  ARModelInfo({
+    required this.name,
+    required this.icon,
+    required this.uri,
+    required this.scale,
+    this.position,
+    this.rotation,
+  });
 }
