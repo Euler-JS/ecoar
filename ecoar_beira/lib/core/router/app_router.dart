@@ -1,4 +1,5 @@
 import 'package:ecoar_beira/features/ar/presentation/pages/ar_experience_page.dart';
+import 'package:ecoar_beira/features/ar/presentation/pages/ar_real_page.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter/material.dart';
 
@@ -101,7 +102,8 @@ class AppRouter {
         name: 'ar_experience',
         builder: (context, state) {
           final markerId = state.pathParameters['markerId']!;
-          return RealARExperiencePage(markerId: markerId);
+          // return RealARExperiencePage(markerId: markerId);
+          return RealARPage();
         },
       ),
       

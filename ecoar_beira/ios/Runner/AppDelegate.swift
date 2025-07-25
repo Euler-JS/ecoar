@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import AVFoundation
+import ARKit  // ← Adicional (opcional)
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -10,15 +11,26 @@ import AVFoundation
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
     checkCameraPermission()
+    checkARAvailability()  // ← Opcional
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
-   func checkCameraPermission() {
+  
+  func checkCameraPermission() {
     AVCaptureDevice.requestAccess(for: .video) { granted in
       if granted {
-        print("Permissão da câmera concedida")
+        print("✅ Permissão da câmera concedida")
       } else {
-        print("Permissão da câmera negada")
+        print("❌ Permissão da câmera negada")
       }
+    }
+  }
+  
+  // ← OPCIONAL - ar_flutter_plugin já faz isso
+  func checkARAvailability() {
+    if ARWorldTrackingConfiguration.isSupported {
+      print("✅ ARKit suportado neste dispositivo")
+    } else {
+      print("❌ ARKit NÃO suportado neste dispositivo")
     }
   }
 }

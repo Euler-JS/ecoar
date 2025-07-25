@@ -1,561 +1,168 @@
+// SUBSTITUA sua ar_experience_page.dart atual por este código
+// Aproveitando que mobile_scanner JÁ FUNCIONA no seu projeto
 import 'dart:async';
-import 'dart:math';
-import 'package:ecoar_beira/features/plant_identification/pages/plant_identification_page.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:go_router/go_router.dart';
+import 'package:ar_flutter_plugin/managers/ar_location_manager.dart';
+import 'package:flutter/material.dart' hide Colors;
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:ecoar_beira/core/models/ar_scene_model.dart';
+import 'package:ar_flutter_plugin/ar_flutter_plugin.dart';
+import 'package:ar_flutter_plugin/datatypes/config_planedetection.dart';
+import 'package:ar_flutter_plugin/datatypes/node_types.dart';
+import 'package:ar_flutter_plugin/managers/ar_anchor_manager.dart';
+import 'package:ar_flutter_plugin/managers/ar_object_manager.dart';
+import 'package:ar_flutter_plugin/managers/ar_session_manager.dart';
+import 'package:ar_flutter_plugin/models/ar_anchor.dart';
+import 'package:ar_flutter_plugin/models/ar_hittest_result.dart';
+import 'package:ar_flutter_plugin/models/ar_node.dart';
+import 'package:vector_math/vector_math_64.dart';
 import 'package:ecoar_beira/core/theme/app_theme.dart';
-import 'package:ecoar_beira/core/utils/logger.dart';
-import 'package:ecoar_beira/features/ar/data/repositories/ar_scene_repository.dart';
-
 class RealARExperiencePage extends StatefulWidget {
-  final String markerId;
+  final String? markerId;
   
-  const RealARExperiencePage({
-    super.key,
-    required this.markerId,
-  });
+  const RealARExperiencePage({super.key, this.markerId});
 
   @override
   State<RealARExperiencePage> createState() => _RealARExperiencePageState();
 }
 
 class _RealARExperiencePageState extends State<RealARExperiencePage>
-    with TickerProviderStateMixin, WidgetsBindingObserver {
-  
-  // Repositories
-  final ARSceneRepository _sceneRepository = ARSceneRepository();
-  
-  // Mobile Scanner (mesma tecnologia que funciona no QR)
-  MobileScannerController? _mobileScannerController;
+    with TickerProviderStateMixin {
   
   // Controllers
-  late AnimationController _loadingController;
-  late AnimationController _uiController;
+  MobileScannerController? _scannerController;
+  ARSessionManager? _arSessionManager;
+  ARObjectManager? _arObjectManager;
+  ARAnchorManager? _arAnchorManager;
+  
+  // Animations
+  late AnimationController _fadeController;
+  late AnimationController _bounceController;
+  late Animation<double> _fadeAnimation;
+  late Animation<double> _bounceAnimation;
   
   // State
+  bool _useScanner = true;
+  bool _arInitialized = false;
   bool _isLoading = true;
-  bool _isReady = false;
-  bool _showInstructions = true;
-  bool _hasError = false;
-  String _errorMessage = '';
-  ARSceneModel? _currentScene;
-  int _pointsEarned = 0;
+  String _scannedData = '';
+  String _statusMessage = 'Inicializando...';
   
-  // AR Objects simulados
-  List<MockARObject> _mockObjects = [];
-  Timer? _objectSpawnTimer;
-  
-  // UI State
-  bool _showUI = true;
-  Timer? _uiHideTimer;
+  // AR Objects
+  List<ARNode> _arNodes = [];
+  List<ARPlaneAnchor> _arAnchors = [];
+  int _objectCount = 0;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-    ]);
-    
     _setupAnimations();
-    _initializeExperience();
+    _initializeScanner();
+    
+    // Se markerId foi passado, pular scanner
+    if (widget.markerId != null) {
+      _scannedData = widget.markerId!;
+      _useScanner = false;
+      _isLoading = false;
+    }
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitDown,
-      DeviceOrientation.portraitUp,
-    ]);
-    
-    _cleanup();
+    _scannerController?.dispose();
+    _arSessionManager?.dispose();
+    _fadeController.dispose();
+    _bounceController.dispose();
     super.dispose();
   }
 
   void _setupAnimations() {
-    _loadingController = AnimationController(
-      duration: const Duration(seconds: 2),
+    _fadeController = AnimationController(
+      duration: const Duration(milliseconds: 800),
       vsync: this,
-    )..repeat();
+    );
+    _bounceController = AnimationController(
+      duration: const Duration(milliseconds: 1200),
+      vsync: this,
+    );
     
-    _uiController = AnimationController(
-      duration: const Duration(milliseconds: 300),
-      vsync: this,
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _fadeController, curve: Curves.easeInOut),
+    );
+    _bounceAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
+      CurvedAnimation(parent: _bounceController, curve: Curves.elasticOut),
     );
   }
 
-  Future<void> _initializeExperience() async {
-    try {
-      AppLogger.i('Initializing Mobile Scanner AR experience for marker: ${widget.markerId}');
-      
-      // Load scene
-      await _loadScene();
-      
-      // Initialize mobile scanner (tecnologia comprovada)
-      await _initializeMobileScanner();
-      
-      setState(() {
-        _isLoading = false;
-        _isReady = true;
-      });
-
-      _uiController.forward();
-      _startInstructionTimer();
-      _startMockARObjects();
-
-    } catch (e, stackTrace) {
-      AppLogger.e('Error initializing experience', e, stackTrace);
-      _showError('Erro ao carregar experiência AR: $e');
-    }
-  }
-
-  Future<void> _initializeMobileScanner() async {
-    try {
-      AppLogger.i('Initializing mobile_scanner (same as working QR scanner)...');
-      
-      await Future.delayed(const Duration(milliseconds: 1500));
-
-      // Configuração EXATA do scanner QR que funciona
-      _mobileScannerController = MobileScannerController(
-        facing: CameraFacing.back,
-        torchEnabled: false,
-        returnImage: false,
-        formats: [BarcodeFormat.qrCode],
-      );
-      
-      await _mobileScannerController!.start();
-      
-      AppLogger.i('Mobile scanner initialized successfully for AR!');
-
-      if (!mounted) return;
-      
-    } catch (e, stackTrace) {
-      AppLogger.e('Error initializing mobile scanner', e, stackTrace);
-      throw Exception('Falha ao inicializar câmera: $e');
-    }
-  }
-
-  Future<void> _loadScene() async {
-    try {
-      final scene = await _sceneRepository.getSceneByMarkerId(widget.markerId);
-      if (scene == null) {
-        throw Exception('Scene not found for marker: ${widget.markerId}');
-      }
-
-      _currentScene = scene;
-      AppLogger.i('Scene loaded: ${scene.name}');
-
-    } catch (e, stackTrace) {
-      AppLogger.e('Error loading scene', e, stackTrace);
-      throw Exception('Falha ao carregar cena AR');
-    }
-  }
-
-  void _startMockARObjects() {
-    _objectSpawnTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-      if (_mockObjects.length < 6) {
-        _spawnMockObject();
-      }
-    });
-  }
-
-  void _spawnMockObject() {
-    final random = Random();
-    final sceneObjects = _getSceneObjects();
-    
-    final index = random.nextInt(sceneObjects.length);
-    final objectData = sceneObjects[index];
-    
-    final mockObject = MockARObject(
-      id: 'object_${DateTime.now().millisecondsSinceEpoch}',
-      emoji: objectData['emoji']!,
-      name: objectData['name']!,
-      description: objectData['description']!,
-      position: Offset(
-        random.nextDouble() * 280 + 50,
-        random.nextDouble() * 500 + 150,
-      ),
-      scale: 0.7 + random.nextDouble() * 0.6,
-      points: objectData['points'] as int,
+  void _initializeScanner() {
+    _scannerController = MobileScannerController(
+      detectionSpeed: DetectionSpeed.noDuplicates,
+      facing: CameraFacing.back,
     );
     
     setState(() {
-      _mockObjects.add(mockObject);
+      _statusMessage = '📱 Scanner ativo - Posicione QR Code na tela';
+      _isLoading = false;
     });
-    
-    // Auto-remove após 12 segundos
-    Timer(const Duration(seconds: 12), () {
-      if (mounted) {
-        setState(() {
-          _mockObjects.removeWhere((obj) => obj.id == mockObject.id);
-        });
-      }
-    });
-  }
-
-  List<Map<String, dynamic>> _getSceneObjects() {
-    switch (widget.markerId) {
-      case 'bacia1_001':
-        return [
-          {'emoji': '🌳', 'name': 'Baobá', 'description': 'Árvore da vida com mais de 1000 anos', 'points': 75},
-          {'emoji': '🐦', 'name': 'Bem-te-vi', 'description': 'Ave símbolo da biodiversidade local', 'points': 50},
-          {'emoji': '🌱', 'name': 'Strelitzia', 'description': 'Planta tropical endêmica', 'points': 40},
-          {'emoji': '🦋', 'name': 'Borboleta', 'description': 'Polinizador essencial do ecossistema', 'points': 30},
-        ];
-      case 'bacia2_001':
-        return [
-          {'emoji': '💧', 'name': 'Água Limpa', 'description': 'Recurso vital para a vida', 'points': 60},
-          {'emoji': '🌊', 'name': 'Ciclo da Água', 'description': 'Processo natural de renovação', 'points': 80},
-          {'emoji': '🐟', 'name': 'Peixe Nativo', 'description': 'Indicador de qualidade da água', 'points': 45},
-          {'emoji': '🪴', 'name': 'Aguapé', 'description': 'Planta aquática purificadora', 'points': 35},
-        ];
-      case 'bacia3_001':
-        return [
-          {'emoji': '🌾', 'name': 'Horta Urbana', 'description': 'Agricultura sustentável na cidade', 'points': 70},
-          {'emoji': '🥬', 'name': 'Vegetais', 'description': 'Alimentos frescos locais', 'points': 40},
-          {'emoji': '🏗️', 'name': 'Compostor', 'description': 'Sistema de reciclagem orgânica', 'points': 55},
-          {'emoji': '🌿', 'name': 'Ervas', 'description': 'Plantas medicinais tradicionais', 'points': 30},
-        ];
-      default:
-        return [
-          {'emoji': '🌍', 'name': 'Planeta', 'description': 'Nossa casa comum', 'points': 100},
-          {'emoji': '♻️', 'name': 'Reciclagem', 'description': 'Economia circular', 'points': 50},
-        ];
-    }
-  }
-
-  void _startInstructionTimer() {
-    Timer(const Duration(seconds: 6), () {
-      if (mounted) {
-        setState(() {
-          _showInstructions = false;
-        });
-      }
-    });
-  }
-
-  void _cleanup() async {
-    try {
-      _loadingController.dispose();
-      _uiController.dispose();
-      _uiHideTimer?.cancel();
-      _objectSpawnTimer?.cancel();
-      
-      if (_mobileScannerController != null) {
-        _mobileScannerController!.dispose();
-        _mobileScannerController = null;
-      }
-      
-      AppLogger.i('AR Experience cleanup completed successfully.');
-    } catch (e) {
-      AppLogger.e('Error during cleanup', e);
-    }
+    _fadeController.forward();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.backgroundDark,
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Icon(_useScanner ? Icons.qr_code_scanner : Icons.view_in_ar),
+            const SizedBox(width: 8),
+            Text(_useScanner ? 'EcoAR Scanner' : 'EcoAR Experiência'),
+          ],
+        ),
+        backgroundColor: _useScanner ? AppTheme.primaryBlue : AppTheme.primaryGreen,
+        elevation: 0,
+        actions: [
+          if (!_useScanner && _arInitialized)
+            IconButton(
+              icon: const Icon(Icons.delete_sweep),
+              onPressed: _clearAllARObjects,
+              tooltip: 'Limpar objetos',
+            ),
+        ],
+      ),
       body: Stack(
         children: [
-          // Camera background (mobile_scanner)
-          _buildCameraBackground(),
+          // Main content
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 600),
+            child: _isLoading
+                ? _buildLoadingScreen()
+                : _useScanner
+                    ? _buildScannerScreen()
+                    : _buildARScreen(),
+          ),
           
-          // AR Objects overlay
-          if (_isReady) _buildMockARObjects(),
+          // Status overlay
+          _buildStatusOverlay(),
           
-          // Loading overlay
-          if (_isLoading) _buildLoadingOverlay(),
-          
-          // Error overlay
-          if (_hasError) _buildErrorOverlay(),
-          
-          // UI overlay
-          if (_isReady && !_hasError) _buildUIOverlay(),
-          
-          // Exit button
-          _buildExitButton(),
+          // Mode controls
+          if (!_isLoading) _buildControls(),
         ],
       ),
     );
   }
 
-  Widget _buildCameraBackground() {
-    if (_mobileScannerController == null) {
+  Widget _buildLoadingScreen() {
     return Container(
-      color: Colors.black,
+      key: const ValueKey('loading'),
+      color: AppTheme.accentGreen,
       child: const Center(
-        child: CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryGreen),
-        ),
-      ),
-    );
-  }
-
-    return SizedBox.expand(
-      child: MobileScanner(
-        controller: _mobileScannerController!,
-        onDetect: (capture) {
-          // Camera rodando mas não detectando QR codes 
-          // Apenas fornecendo fundo da câmera para objetos AR
-        },
-        overlay: Container(), // Overlay transparente para objetos AR
-      ),
-    );
-  }
-
-  Widget _buildMockARObjects() {
-    return Stack(
-      children: _mockObjects.map((obj) => _buildMockObject(obj)).toList(),
-    );
-  }
-
-  Widget _buildMockObject(MockARObject obj) {
-    return Positioned(
-      left: obj.position.dx,
-      top: obj.position.dy,
-      child: GestureDetector(
-        onTap: () => _onMockObjectTapped(obj),
-        child: TweenAnimationBuilder<double>(
-          duration: const Duration(milliseconds: 800),
-          tween: Tween(begin: 0.0, end: 1.0),
-          builder: (context, value, child) {
-            return Transform.scale(
-              scale: obj.scale * value,
-              child: Container(
-                width: 70,
-                height: 70,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.95),
-                  borderRadius: BorderRadius.circular(35),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppTheme.primaryGreen.withOpacity(0.4),
-                      blurRadius: 15,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                  border: Border.all(
-                    color: AppTheme.primaryGreen.withOpacity(0.6),
-                    width: 2,
-                  ),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      obj.emoji,
-                      style: const TextStyle(fontSize: 28),
-                    ),
-                    Text(
-                      obj.name,
-                      style: const TextStyle(
-                        fontSize: 8, 
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.primaryGreen,
-                      ),
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  void _onMockObjectTapped(MockARObject obj) {
-    HapticFeedback.lightImpact();
-    
-    setState(() {
-      _pointsEarned += obj.points;
-      _mockObjects.removeWhere((o) => o.id == obj.id);
-    });
-    
-    _showPointsAnimation(obj.points);
-    _showObjectInfoDialog(obj);
-  }
-
-  void _showPointsAnimation(int points) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Center(
-        child: TweenAnimationBuilder<double>(
-          duration: const Duration(milliseconds: 1200),
-          tween: Tween(begin: 0.0, end: 1.0),
-          builder: (context, value, child) {
-            return Transform.scale(
-              scale: value,
-              child: Container(
-                padding: const EdgeInsets.all(32),
-                decoration: BoxDecoration(
-                  color: AppTheme.successGreen,
-                  borderRadius: BorderRadius.circular(25),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppTheme.successGreen.withOpacity(0.4),
-                      blurRadius: 25,
-                      offset: const Offset(0, 15),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.stars, color: Colors.white, size: 56),
-                    const SizedBox(height: 20),
-                    Text(
-                      '+$points',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 36,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Text(
-                      'pontos!',
-                      style: TextStyle(color: Colors.white, fontSize: 18),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-
-    Timer(const Duration(milliseconds: 1800), () {
-      if (mounted) Navigator.of(context).pop();
-    });
-  }
-
-  void _showObjectInfoDialog(MockARObject obj) {
-    Timer(const Duration(milliseconds: 2000), () {
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: Row(
-              children: [
-                Text(obj.emoji, style: const TextStyle(fontSize: 24)),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    obj.name,
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  obj.description,
-                  style: const TextStyle(fontSize: 16),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppTheme.primaryGreen.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.eco, color: AppTheme.primaryGreen),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Você ganhou ${obj.points} pontos!',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: AppTheme.primaryGreen,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Continuar Explorando'),
-              ),
-            ],
-          ),
-        );
-      }
-    });
-  }
-
-  Widget _buildLoadingOverlay() {
-    return Container(
-      color: Colors.black87,
-      child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            RotationTransition(
-              turns: _loadingController,
-              child: Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  color: AppTheme.primaryGreen,
-                  borderRadius: BorderRadius.circular(40),
-                ),
-                child: const Icon(
-                  Icons.camera_alt,
-                  size: 40,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'Inicializando Experiência AR...',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 8),
+            CircularProgressIndicator(color: AppTheme.primaryGreen),
+            SizedBox(height: 20),
             Text(
-              'Marker: ${widget.markerId}',
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Usando tecnologia Mobile Scanner',
-              style: TextStyle(
-                color: AppTheme.primaryGreen,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 24),
-            const LinearProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryGreen),
-              backgroundColor: Colors.white24,
+              'Inicializando EcoAR...',
+              style: TextStyle(color: AppTheme.primaryGreen, fontSize: 18),
             ),
           ],
         ),
@@ -563,64 +170,113 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     );
   }
 
-  Widget _buildErrorOverlay() {
+  Widget _buildScannerScreen() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: Container(
+        key: const ValueKey('scanner'),
+        child: MobileScanner(
+          controller: _scannerController!,
+          onDetect: _onQRCodeDetected,
+          overlay: Container(
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: AppTheme.primaryGreen,
+                width: 3,
+              ),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            margin: const EdgeInsets.all(50),
+            child: const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.center_focus_strong, size: 80, color: AppTheme.backgroundLight),
+                  SizedBox(height: 20),
+                  Text(
+                    'Posicione o QR Code aqui',
+                    style: TextStyle(
+                      color: AppTheme.primaryGreen,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      backgroundColor: AppTheme.backgroundDark,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildARScreen() {
     return Container(
-      color: Colors.black87,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
+      key: const ValueKey('ar'),
+      child: ARView(
+        onARViewCreated: _onARViewCreated,
+        planeDetectionConfig: PlaneDetectionConfig.horizontal,
+      ),
+    );
+  }
+
+  Widget _buildStatusOverlay() {
+    return Positioned(
+      top: 20,
+      left: 20,
+      right: 20,
+      child: ScaleTransition(
+        scale: _bounceAnimation,
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppTheme.backgroundDark,
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(
+              color: _useScanner ? AppTheme.primaryBlue : AppTheme.primaryGreen,
+              width: 2,
+            ),
+          ),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(
-                Icons.error_outline,
-                size: 80,
-                color: AppTheme.errorRed,
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Erro na Experiência AR',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 16),
               Text(
-                _errorMessage,
+                _statusMessage,
                 style: const TextStyle(
-                  color: Colors.white70,
+                  color: AppTheme.backgroundLight,
                   fontSize: 16,
+                  fontWeight: FontWeight.w500,
                 ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 32),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  ElevatedButton(
-                    onPressed: () => context.pop(),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.grey[600],
-                    ),
-                    child: const Text('Voltar'),
+              if (_scannedData.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryGreen,
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  ElevatedButton(
-                    onPressed: () {
-                      setState(() {
-                        _hasError = false;
-                        _isLoading = true;
-                      });
-                      _initializeExperience();
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.primaryGreen,
+                  child: Text(
+                    'Código: $_scannedData',
+                    style: const TextStyle(
+                      color: AppTheme.backgroundLight,
+                      fontSize: 12,
+                      fontFamily: 'monospace',
                     ),
-                    child: const Text('Tentar Novamente'),
                   ),
-                ],
-              ),
+                ),
+              ],
+              if (!_useScanner && _arInitialized) ...[
+                const SizedBox(height: 10),
+                Text(
+                  'Objetos AR: $_objectCount',
+                  style: const TextStyle(
+                    color: AppTheme.primaryGreen,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -628,232 +284,138 @@ class _RealARExperiencePageState extends State<RealARExperiencePage>
     );
   }
 
-  Widget _buildUIOverlay() {
-    return FadeTransition(
-      opacity: _uiController,
+  Widget _buildControls() {
+    return Positioned(
+      bottom: 30,
+      left: 20,
+      right: 20,
       child: Column(
         children: [
-          _buildTopInfoBar(),
-          const Spacer(),
-          if (_showInstructions) _buildInstructions(),
-          _buildBottomActionBar(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTopInfoBar() {
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.only(
-        top: MediaQuery.of(context).padding.top + 60,
-        left: 16,
-        right: 16,
-        bottom: 16,
-      ),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.black.withOpacity(0.7),
-            Colors.transparent,
-          ],
-        ),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _currentScene?.name ?? 'Experiência AR',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Row(
-                children: [
-                  Text(
-                    'Marker: ${widget.markerId}',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: AppTheme.primaryBlue,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Text(
-                      'Mobile Scanner AR',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
+          // Mode switcher
+          Container(
+            decoration: BoxDecoration(
+              color: AppTheme.backgroundDark,
+              borderRadius: BorderRadius.circular(30),
+              border: Border.all(color: AppTheme.surfaceDark),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => _switchMode(true),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                      decoration: BoxDecoration(
+                        color: _useScanner ? AppTheme.primaryBlue : AppTheme.textSecondary,
+                        borderRadius: BorderRadius.circular(30),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.qr_code_scanner,
+                            color: AppTheme.backgroundLight,
+                            size: _useScanner ? 20 : 18,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Scanner',
+                            style: TextStyle(
+                              color: AppTheme.backgroundLight,
+                              fontWeight: _useScanner ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                ],
-              ),
-            ],
-          ),
-          if (_pointsEarned > 0)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: AppTheme.successGreen,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                '+$_pointsEarned pts',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
                 ),
-              ),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => _switchMode(false),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                      decoration: BoxDecoration(
+                        color: !_useScanner ? AppTheme.primaryGreen : AppTheme.surfaceLight,
+                        borderRadius: BorderRadius.circular(30),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.view_in_ar,
+                            color: AppTheme.backgroundLight,
+                            size: !_useScanner ? 20 : 18,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'AR',
+                            style: TextStyle(
+                              color: AppTheme.backgroundLight,
+                              fontWeight: !_useScanner ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
+          ),
+          
+          // AR specific controls
+          if (!_useScanner && _arInitialized) ...[
+            const SizedBox(height: 15),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _buildARButton(
+                  icon: Icons.park,
+                  label: 'Árvore',
+                  onTap: () => _addARObject('tree'),
+                ),
+                _buildARButton(
+                  icon: Icons.local_florist,
+                  label: 'Flor',
+                  onTap: () => _addARObject('flower'),
+                ),
+                _buildARButton(
+                  icon: Icons.eco,
+                  label: 'Planta',
+                  onTap: () => _addARObject('plant'),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
   }
 
- Widget _buildInstructions() {
-  return Container(
-    margin: const EdgeInsets.all(16),
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: Colors.black.withOpacity(0.8),
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Column(
-      children: [
-        const Text(
-          'Objetos educativos aparecerão automaticamente na tela - toque neles para aprender e ganhar pontos!',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-          ),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: AppTheme.primaryGreen.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.nature, color: AppTheme.primaryGreen, size: 16),
-              SizedBox(width: 8),
-              Text(
-                'Use o botão "Plantas" para identificar plantas reais!',
-                style: TextStyle(
-                  color: AppTheme.primaryGreen,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-  Widget _buildBottomActionBar() {
-  return Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.bottomCenter,
-        end: Alignment.topCenter,
-        colors: [
-          Colors.black.withOpacity(0.7),
-          Colors.transparent,
-        ],
-      ),
-    ),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: [
-        _buildActionButton(Icons.camera_alt, 'Foto', () => _takePhoto()),
-        _buildActionButton(Icons.nature, 'Plantas', () => _identifyPlant()),  // NOVO
-        _buildActionButton(Icons.info_outline, 'Info', () => _showSceneInfo()),
-        _buildActionButton(Icons.quiz, 'Quiz', () => _startQuiz()),
-        _buildActionButton(Icons.refresh, 'Reset', () => _resetScene()),
-      ],
-    ),
-  );
-}
-
-void _identifyPlant() {
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (context) => const PlantIdentificationPage(),
-    ),
-  ).then((_) {
-    // Retomar sessão AR quando voltar
-    if (mounted) {
-      _resumeARSession();
-    }
-  });
-}
-
-void _pauseARSession() {
-  try {
-    if (_mobileScannerController != null) {
-      _mobileScannerController!.stop();
-    }
-    _objectSpawnTimer?.cancel();
-  } catch (e) {
-    AppLogger.e('Error pausing AR session', e);
-  }
-}
-
-
-void _resumeARSession() async {
-  try {
-    if (_mobileScannerController != null) {
-      await _mobileScannerController!.start();
-    }
-    _startMockARObjects();
-  } catch (e) {
-    AppLogger.e('Error resuming AR session', e);
-  }
-}
-  Widget _buildActionButton(IconData icon, String label, VoidCallback onTap) {
+  Widget _buildARButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white.withOpacity(0.3)),
+          color: AppTheme.primaryGreen  ,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppTheme.primaryGreen),
         ),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: Colors.white, size: 20),
+            Icon(icon, color: AppTheme.backgroundLight, size: 24),
             const SizedBox(height: 4),
             Text(
               label,
               style: const TextStyle(
-                color: Colors.white,
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
+                color: AppTheme.backgroundLight,
+                fontSize: 12,
               ),
             ),
           ],
@@ -862,200 +424,186 @@ void _resumeARSession() async {
     );
   }
 
-  Widget _buildExitButton() {
-    return Positioned(
-      top: MediaQuery.of(context).padding.top + 16,
-      left: 16,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.5),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: IconButton(
-          icon: const Icon(Icons.close, color: Colors.white),
-          onPressed: () => _exitExperience(),
-        ),
-      ),
-    );
-  }
-
-  void _takePhoto() async {
-    try {
-      HapticFeedback.mediumImpact();
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('📸 Foto Mobile Scanner AR capturada!'),
-          backgroundColor: AppTheme.successGreen,
-        ),
-      );
-      
-    } catch (e) {
-      AppLogger.e('Error taking photo', e);
+  void _onQRCodeDetected(BarcodeCapture capture) {
+    for (final barcode in capture.barcodes) {
+      final String? code = barcode.rawValue;
+      if (code != null && code != _scannedData) {
+        setState(() {
+          _scannedData = code;
+          _statusMessage = '✅ QR Code detectado! Mudando para AR...';
+        });
+        
+        _bounceController.forward();
+        
+        // Auto switch to AR after successful scan
+        Timer(const Duration(seconds: 2), () {
+          _switchMode(false);
+        });
+        break;
+      }
     }
   }
 
-  void _showSceneInfo() {
-  if (_currentScene == null) return;
-  
-  showModalBottomSheet(
-    context: context,
-    backgroundColor: Colors.transparent,
-    builder: (context) => Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _currentScene!.name,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _currentScene!.description,
-              style: const TextStyle(fontSize: 16, color: Colors.grey),
-            ),
-            const SizedBox(height: 20),
-            
-            // Informações do AR ativo
-            Row(
-              children: [
-                const Icon(Icons.camera_alt, color: AppTheme.primaryGreen),
-                const SizedBox(width: 8),
-                const Text('Mobile Scanner AR Ativo'),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const Icon(Icons.timeline, color: AppTheme.primaryBlue),
-                const SizedBox(width: 8),
-                Text('${_mockObjects.length} objetos na tela'),
-              ],
-            ),
-            const SizedBox(height: 8),
-            
-            // NOVO: Identificação de plantas real
-            Row(
-              children: [
-                const Icon(Icons.nature, color: AppTheme.successGreen),
-                const SizedBox(width: 8),
-                const Text('Identificação de plantas disponível'),
-              ],
-            ),
-            
-            const SizedBox(height: 20),
-            
-            // Botões de ação
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                      _identifyPlant();
-                    },
-                    icon: const Icon(Icons.nature),
-                    label: const Text('Identificar Plantas'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Fechar'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
+  void _onARViewCreated(
+    ARSessionManager arSessionManager,
+    ARObjectManager arObjectManager,
+    ARAnchorManager arAnchorManager,
+    ARLocationManager arLocationManager,
+  ) {
+    _arSessionManager = arSessionManager;
+    _arObjectManager = arObjectManager;
+    _arAnchorManager = arAnchorManager;
 
-  void _startQuiz() {
-    context.go('/challenge/ar_quiz_${widget.markerId}');
-  }
-
-  void _resetScene() async {
-    try {
-      setState(() {
-        _pointsEarned = 0;
-        _mockObjects.clear();
-      });
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('🔄 Experiência reiniciada!'),
-          backgroundColor: AppTheme.primaryBlue,
-        ),
-      );
-    } catch (e) {
-      AppLogger.e('Error resetting scene', e);
-    }
-  }
-
-  void _exitExperience() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Sair da Experiência AR?'),
-        content: const Text('Seu progresso será salvo automaticamente.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancelar'),
-          ),
-          TextButton(
-          onPressed: () {
-            Navigator.of(context).pop(); // Remove o diálogo
-            // Verificar se pode fazer pop, senão vai para home
-            if (Navigator.of(context).canPop()) {
-              context.pop();
-            } else {
-              context.go('/home'); // Vai para home se não pode fazer pop
-            }
-          },
-          child: const Text('Sair'),
-        ),
-        ],
-      ),
+    _arSessionManager!.onInitialize(
+      showFeaturePoints: false,
+      showPlanes: true,
+      customPlaneTexturePath: null,
+      showWorldOrigin: false,
+      handlePans: true,
+      handleRotation: true,
     );
-  }
+    _arObjectManager!.onInitialize();
 
-  void _showError(String message) {
+    _arSessionManager!.onPlaneOrPointTap = _onPlaneTapped;
+
     setState(() {
-      _hasError = true;
-      _errorMessage = message;
-      _isLoading = false;
+      _arInitialized = true;
+      _statusMessage = '🎯 AR ativo! Toque numa superfície para colocar objetos';
+    });
+    
+    // Se já tem dados escaneados, carrega automaticamente
+    if (_scannedData.isNotEmpty) {
+      Timer(const Duration(seconds: 1), () {
+        _addARObject('auto');
+      });
+    }
+  }
+
+  Future<void> _onPlaneTapped(List<ARHitTestResult> hitTestResults) async {
+    final hitTestResult = hitTestResults.firstOrNull;
+    if (hitTestResult != null) {
+      final anchor = ARPlaneAnchor(transformation: hitTestResult.worldTransform);
+      final didAddAnchor = await _arAnchorManager!.addAnchor(anchor);
+      
+      if (didAddAnchor!) {
+        _arAnchors.add(anchor);
+        await _addSceneObject(anchor);
+      }
+    }
+  }
+
+  Future<void> _addARObject(String type) async {
+    if (_arAnchors.isEmpty) {
+      setState(() {
+        _statusMessage = '❌ Toque numa superfície primeiro para colocar objeto';
+      });
+      return;
+    }
+
+    final anchor = _arAnchors.last;
+    await _addSceneObject(anchor, type: type);
+  }
+
+  Future<void> _addSceneObject(ARPlaneAnchor anchor, {String type = 'auto'}) async {
+    try {
+      ARNode? newNode;
+      
+      // Determinar que tipo de objeto carregar
+      String objectType = type;
+      // if (type == 'auto') {
+      //   objectType = _determineObjectTypeFromScan();
+      // }
+
+      objectType = 'tree';
+
+      newNode = ARNode(
+            type: NodeType.webGLB,
+            uri: "https://euler-js.github.io/files_test/sword_barbarian.glb",
+            scale: Vector3(0.15, 0.15, 0.15),
+            position: Vector3(0.0, 0.0, 0.0),
+            rotation: Vector4(1.0, 0.0, 0.0, 0.0),
+          );
+
+      // Criar nó AR baseado no tipo
+      switch (objectType) {
+        case 'tree':
+          newNode = ARNode(
+            type: NodeType.webGLB,
+            uri: "https://euler-js.github.io/files_test/sword_barbarian.glb",
+            scale: Vector3(0.15, 0.15, 0.15),
+            position: Vector3(0.0, 0.0, 0.0),
+            rotation: Vector4(1.0, 0.0, 0.0, 0.0),
+          );
+          break;
+          
+        case 'flower':
+          newNode = ARNode(
+            type: NodeType.localGLTF2,
+            uri: "assets/ar_models/scene.gltf",
+            scale: Vector3(0.05, 0.05, 0.05),
+            position: Vector3(0.2, 0.0, 0.2),
+            rotation: Vector4(0.0, 1.0, 0.0, 1.57),
+          );
+          break;
+          
+        default:
+          newNode = ARNode(
+            type: NodeType.webGLB,
+            uri: "https://euler-js.github.io/files_test/sword_barbarian.glb",
+            scale: Vector3(0.1, 0.1, 0.1),
+            position: Vector3(0.0, 0.0, 0.0),
+            rotation: Vector4(1.0, 0.0, 0.0, 0.0),
+          );
+      }
+
+      final didAddNode = await _arObjectManager!.addNode(newNode, planeAnchor: anchor);
+      if (didAddNode!) {
+        _arNodes.add(newNode);
+        setState(() {
+          _objectCount++;
+          _statusMessage = '🌱 Objeto $objectType adicionado! ($_objectCount total)';
+        });
+        _bounceController.forward();
+      }
+    } catch (e) {
+      setState(() {
+        _statusMessage = '❌ Erro ao carregar objeto: $e';
+      });
+    }
+  }
+
+  String _determineObjectTypeFromScan() {
+    final data = _scannedData.toLowerCase();
+    if (data.contains('tree') || data.contains('arvore')) return 'tree';
+    if (data.contains('flower') || data.contains('flor')) return 'flower';
+    if (data.contains('plant') || data.contains('planta')) return 'plant';
+    return 'plant'; // default
+  }
+
+  void _switchMode(bool useScanner) {
+    setState(() {
+      _useScanner = useScanner;
+      if (_useScanner) {
+        _statusMessage = '📱 Scanner ativo - Posicione QR Code na tela';
+      } else {
+        _statusMessage = _arInitialized 
+          ? '🎯 AR ativo! Toque numa superfície'
+          : '⏳ Inicializando AR...';
+      }
+    });
+    _fadeController.reset();
+    _fadeController.forward();
+  }
+
+  void _clearAllARObjects() async {
+    for (final anchor in _arAnchors) {
+      await _arAnchorManager!.removeAnchor(anchor);
+    }
+    _arAnchors.clear();
+    _arNodes.clear();
+    setState(() {
+      _objectCount = 0;
+      _statusMessage = '🗑️ Objetos removidos! Toque para recolocar';
     });
   }
-}
-
-class MockARObject {
-  final String id;
-  final String emoji;
-  final String name;
-  final String description;
-  final Offset position;
-  final double scale;
-  final int points;
-
-  MockARObject({
-    required this.id,
-    required this.emoji,
-    required this.name,
-    required this.description,
-    required this.position,
-    required this.scale,
-    required this.points,
-  });
 }

@@ -14,6 +14,10 @@
 	<string>6.0</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Este aplicativo precisa acessar a câmera para escanear códigos QR e utilizar recursos de Realidade Aumentada para experiências educativas.</string>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arkit</string>
+	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Precisamos da sua localização para mostrar dados relevantes.</string>
 	<key>CFBundleName</key>
