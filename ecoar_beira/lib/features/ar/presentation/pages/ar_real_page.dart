@@ -261,13 +261,14 @@ class _RealARPageState extends State<RealARPage> {
     );
     this.arObjectManager!.onInitialize();
 
-    this.arSessionManager!.onPlaneOrPointTap = _onPlaneOrPointTapped;
+    // this.arSessionManager!.onPlaneOrPointTap = _onPlaneOrPointTapped;
     this.arObjectManager!.onPanStart = _onPanStarted;
     this.arObjectManager!.onPanChange = _onPanChanged;
     this.arObjectManager!.onPanEnd = _onPanEnded;
     this.arObjectManager!.onRotationStart = _onRotationStarted;
     this.arObjectManager!.onRotationChange = _onRotationChanged;
     this.arObjectManager!.onRotationEnd = _onRotationEnded;
+    this.arObjectManager!.onNodeTap = _onObjectTapped;
 
     setState(() {
       _info = '✅ AR Iniciado! Os modelos aparecerão automaticamente';
@@ -278,6 +279,38 @@ class _RealARPageState extends State<RealARPage> {
       _autoPlaceInitialModels();
     });
   }
+
+  void _onObjectTapped(List<String> nodeNames) {
+  if (nodeNames.isNotEmpty) {
+    String objectName = nodeNames.first;
+    
+    // Encontrar qual modelo foi clicado
+    ARModelInfo? clickedModel = _findModelByNodeName(objectName);
+    
+    setState(() {
+      if (clickedModel != null) {
+        _info = '👆 Você clicou na ${clickedModel.icon} ${clickedModel.name}!';
+      } else {
+        _info = '👆 Você clicou no objeto: $objectName';
+      }
+    });
+    
+    // Opcional: vibração para feedback
+    HapticFeedback.lightImpact();
+  }
+}
+
+// Função auxiliar para encontrar o modelo
+ARModelInfo? _findModelByNodeName(String nodeName) {
+  // Você pode usar o nome do nó para identificar qual modelo é
+  for (var model in _availableModels) {
+    if (nodeName.contains(model.name.toLowerCase()) || 
+        nodeName.contains(model.icon)) {
+      return model;
+    }
+  }
+  return null;
+}
 
   Future<void> _onPlaneOrPointTapped(List<ARHitTestResult> hitTestResults) async {
     var singleHitTestResult = hitTestResults.firstOrNull;
