@@ -121,6 +121,10 @@ class HomePage extends StatelessWidget {
             ),
             child: const Text('Começar Exploração'),
           ),
+          ElevatedButton(
+            onPressed: () => context.push('/plant-identification'),
+            child: Text('🌱 Identificar Plantas'),
+          )
         ],
       ),
     );

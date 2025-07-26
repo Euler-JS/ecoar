@@ -1,5 +1,6 @@
 import 'package:ecoar_beira/features/ar/presentation/pages/ar_experience_page.dart';
 import 'package:ecoar_beira/features/ar/presentation/pages/ar_real_page.dart';
+import 'package:ecoar_beira/features/plant_identification/pages/plant_identification_page.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter/material.dart';
 
@@ -115,6 +116,12 @@ class AppRouter {
           final challengeId = state.pathParameters['challengeId']!;
           return ChallengeDetailPage(challengeId: challengeId);
         },
+      ),
+
+      GoRoute(
+        path: '/plant-identification',
+        name: 'plant_identification',
+        builder: (context, state) => const PlantIdentificationPage(),
       ),
     ],
   );
