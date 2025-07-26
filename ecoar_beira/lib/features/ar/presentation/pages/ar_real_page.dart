@@ -46,7 +46,7 @@ class _RealARPageState extends State<RealARPage> {
     ARModelInfo(
       name: "Flor",
       icon: "🌸",
-      uri: "assets/ar_models/Distinguished_Gentlem_0725173157_texture.glb",
+      uri: "assets/ar_models/diablo_iv_deckard_kanais_cube.glb",
       scale: Vector3(100.0, 100.0, 100.0),
       // position: Vector3(0.2, 0.0, 0.2),
     ),
