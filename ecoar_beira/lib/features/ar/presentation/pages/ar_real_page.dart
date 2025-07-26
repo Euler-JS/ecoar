@@ -42,12 +42,34 @@ class _RealARPageState extends State<RealARPage> {
      scale: Vector3(100.0, 100.0, 100.0), // Aumentando a escala para um tamanho médio
     //  position: Vector3(0.0, 0.0, 0.0),
   // rotation: treeModel.rotation,
+  description: "1Árvore nativa da região da Beira, essencial para o ecossistema local.",
+    scientificName: "1Acacia melanoxylon",
+    benefits: [
+      "1Purifica o ar",
+      "Fornece sombra",
+      "Habitat para pássaros",
+      "Previne erosão do solo"
+    ],
+    care: "Rega moderada, sol direto, poda anual",
+    points: 50,
+    location: "Parque da Beira - Zona Norte",
     ),
     ARModelInfo(
       name: "Flor",
       icon: "🌸",
       uri: "assets/ar_models/diablo_iv_deckard_kanais_cube.glb",
       scale: Vector3(100.0, 100.0, 100.0),
+      description: "2Árvore nativa da região da Beira, essencial para o ecossistema local.",
+    scientificName: "2Acacia melanoxylon",
+    benefits: [
+      "2Purifica o ar",
+      "Fornece sombra",
+      "Habitat para pássaros",
+      "Previne erosão do solo"
+    ],
+    care: "Rega moderada, sol direto, poda anual",
+    points: 50,
+    location: "Parque da Beira - Zona Norte",
       // position: Vector3(0.2, 0.0, 0.2),
     ),
     // ARModelInfo(
@@ -280,36 +302,48 @@ class _RealARPageState extends State<RealARPage> {
     });
   }
 
-  void _onObjectTapped(List<String> nodeNames) {
+ void _onObjectTapped(List<String> nodeNames) {
   if (nodeNames.isNotEmpty) {
     String objectName = nodeNames.first;
-    
-    // Encontrar qual modelo foi clicado
     ARModelInfo? clickedModel = _findModelByNodeName(objectName);
     
     setState(() {
-      if (clickedModel != null) {
-        _info = '👆 Você clicou na ${clickedModel.icon} ${clickedModel.name}!';
-      } else {
-        _info = '👆 Você clicou no objeto: $objectName';
-      }
+      _info = '👆 Clicou em ${clickedModel?.name ?? objectName}';
     });
     
-    // Opcional: vibração para feedback
     HapticFeedback.lightImpact();
+    
+    // 🆕 MOSTRAR DETALHES
+    if (clickedModel != null) {
+      _showObjectDetails(clickedModel);
+    } else {
+      setState(() {
+        _info = '👆 Objeto desconhecido: $objectName';
+      });
+    }
   }
+}
+
+void _showObjectDetails(ARModelInfo model) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => ObjectDetailsModal(model: model),
+  );
 }
 
 // Função auxiliar para encontrar o modelo
 ARModelInfo? _findModelByNodeName(String nodeName) {
-  // Você pode usar o nome do nó para identificar qual modelo é
-  for (var model in _availableModels) {
-    if (nodeName.contains(model.name.toLowerCase()) || 
-        nodeName.contains(model.icon)) {
-      return model;
-    }
+  // Usar o índice do nó para identificar o modelo
+  int nodeIndex = nodes.length - 1; // Último nó adicionado
+  
+  if (nodeIndex >= 0 && nodeIndex < _availableModels.length) {
+    return _availableModels[nodeIndex % _availableModels.length];
   }
-  return null;
+  
+  // Fallback: retornar primeiro modelo
+  return _availableModels.isNotEmpty ? _availableModels[0] : null;
 }
 
   Future<void> _onPlaneOrPointTapped(List<ARHitTestResult> hitTestResults) async {
@@ -438,6 +472,14 @@ class ARModelInfo {
   final Vector3? position;
   final Vector4? rotation;
   
+  // 🆕 NOVOS CAMPOS PARA DETALHES
+  final String description;
+  final String scientificName;
+  final List<String> benefits;
+  final String care;
+  final int points;
+  final String location;
+  
   ARModelInfo({
     required this.name,
     required this.icon,
@@ -445,5 +487,201 @@ class ARModelInfo {
     required this.scale,
     this.position,
     this.rotation,
+    this.description = '',
+    this.scientificName = '',
+    this.benefits = const [],
+    this.care = '',
+    this.points = 0,
+    this.location = '',
   });
+}
+
+class ObjectDetailsModal extends StatelessWidget {
+  final ARModelInfo model;
+  
+  const ObjectDetailsModal({required this.model, super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.8,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          // Handle
+          Container(
+            margin: const EdgeInsets.symmetric(vertical: 8),
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey[300],
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          
+          // Conteúdo
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Título
+                  Row(
+                    children: [
+                      Text(model.icon, style: const TextStyle(fontSize: 40)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              model.name,
+                              style: const TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            if (model.scientificName.isNotEmpty)
+                              Text(
+                                model.scientificName,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontStyle: FontStyle.italic,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      // Pontos
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.green,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          '+${model.points} pts',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  
+                  const SizedBox(height: 20),
+                  
+                  // Descrição
+                  if (model.description.isNotEmpty) ...[
+                    const Text(
+                      'Descrição',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(model.description),
+                    const SizedBox(height: 20),
+                  ],
+                  
+                  // Benefícios
+                  if (model.benefits.isNotEmpty) ...[
+                    const Text(
+                      'Benefícios Ambientais',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...model.benefits.map((benefit) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.check_circle, 
+                            color: Colors.green, size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(benefit)),
+                        ],
+                      ),
+                    )),
+                    const SizedBox(height: 20),
+                  ],
+                  
+                  // Cuidados
+                  if (model.care.isNotEmpty) ...[
+                    const Text(
+                      'Cuidados',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(model.care),
+                    const SizedBox(height: 20),
+                  ],
+                  
+                  // Localização
+                  if (model.location.isNotEmpty) ...[
+                    const Text(
+                      'Localização',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Icon(Icons.location_on, color: Colors.red),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(model.location)),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          
+          // Botão de fechar
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: const Text(
+                  'Fechar',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
