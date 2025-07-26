@@ -15,6 +15,7 @@ import 'package:ar_flutter_plugin/managers/ar_session_manager.dart';
 import 'package:ar_flutter_plugin/models/ar_anchor.dart';
 import 'package:ar_flutter_plugin/models/ar_hittest_result.dart';
 import 'package:ar_flutter_plugin/models/ar_node.dart';
+import 'package:go_router/go_router.dart';
 import 'package:vector_math/vector_math_64.dart' hide Colors;
 
 class RealARPage extends StatefulWidget {
@@ -100,6 +101,11 @@ class _RealARPageState extends State<RealARPage> {
   @override
   void initState() {
     super.initState();
+
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
     // Define o modelo padrão
     _selectedModel = _availableModels[0];
     
@@ -111,6 +117,9 @@ class _RealARPageState extends State<RealARPage> {
 
   @override
   void dispose() {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+  
     super.dispose();
     arSessionManager?.dispose();
   }
@@ -206,58 +215,110 @@ await _addNode(centerAnchor, updatedFlowerModel);
       extendBody: true,
   extendBodyBehindAppBar: true,
   backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          ARView(
-            onARViewCreated: _onARViewCreated,
-            planeDetectionConfig: PlaneDetectionConfig.horizontal,
-          ),
-          // Positioned(
-          //   bottom: 20,
-          //   left: 20,
-          //   right: 20,
-          //   child: Container(
-          //     padding: const EdgeInsets.all(16),
-          //     decoration: BoxDecoration(
-          //       color: Colors.black87,
-          //       borderRadius: BorderRadius.circular(12),
-          //       boxShadow: [
-          //         BoxShadow(
-          //           color: Colors.black.withOpacity(0.5),
-          //           blurRadius: 10,
-          //           spreadRadius: 2,
-          //         ),
-          //       ],
-          //     ),
-          //     child: Column(
-          //       children: [
-          //         // Text(
-          //         //   _info,
-          //         //   style: const TextStyle(
-          //         //     color: Colors.white,
-          //         //     fontSize: 16,
-          //         //     fontWeight: FontWeight.bold,
-          //         //   ),
-          //         //   textAlign: TextAlign.center,
-          //         // ),
-          //         // const SizedBox(height: 12),
-          //         // Row(
-          //         //   mainAxisAlignment: MainAxisAlignment.spaceAround,
-          //         //   children: [
-          //         //     _buildModelButton(_availableModels[0]), // Árvore
-          //         //     const SizedBox(width: 20),
-          //         //     _buildModelButton(_availableModels[1]), // Flor
-          //         //   ],
-          //         // ),
-          //       ],
-          //     ),
-          //   ),
-          // ),
-        
-        ],
+      body: SafeArea(
+        top: false,
+        child: Stack(
+          
+          children: [
+            ARView(
+              onARViewCreated: _onARViewCreated,
+              planeDetectionConfig: PlaneDetectionConfig.horizontal,
+            ),
+            // Overlay com controles mínimos - posicione no canto superior
+            Positioned(
+        top: MediaQuery.of(context).padding.top + 10,
+        right: 16,
+        child: _buildMinimalControls(),
+            ),
+            
+            // Info na parte inferior
+        //     Positioned(
+        // bottom: MediaQuery.of(context).padding.bottom + 20,
+        // left: 16,
+        // right: 16,
+        // child: _buildInfoOverlay(),
+        //     ),
+            // Positioned(
+            //   bottom: 20,
+            //   left: 20,
+            //   right: 20,
+            //   child: Container(
+            //     padding: const EdgeInsets.all(16),
+            //     decoration: BoxDecoration(
+            //       color: Colors.black87,
+            //       borderRadius: BorderRadius.circular(12),
+            //       boxShadow: [
+            //         BoxShadow(
+            //           color: Colors.black.withOpacity(0.5),
+            //           blurRadius: 10,
+            //           spreadRadius: 2,
+            //         ),
+            //       ],
+            //     ),
+            //     child: Column(
+            //       children: [
+            //         // Text(
+            //         //   _info,
+            //         //   style: const TextStyle(
+            //         //     color: Colors.white,
+            //         //     fontSize: 16,
+            //         //     fontWeight: FontWeight.bold,
+            //         //   ),
+            //         //   textAlign: TextAlign.center,
+            //         // ),
+            //         // const SizedBox(height: 12),
+            //         // Row(
+            //         //   mainAxisAlignment: MainAxisAlignment.spaceAround,
+            //         //   children: [
+            //         //     _buildModelButton(_availableModels[0]), // Árvore
+            //         //     const SizedBox(width: 20),
+            //         //     _buildModelButton(_availableModels[1]), // Flor
+            //         //   ],
+            //         // ),
+            //       ],
+            //     ),
+            //   ),
+            // ),
+          
+          ],
+        ),
       ),
     );
   }
+
+  Widget _buildMinimalControls() {
+  return Column(
+    children: [
+      // Botão fechar
+      FloatingActionButton(
+        mini: true,
+        backgroundColor: Colors.black54,
+        onPressed: () => context.go('/scanner'),
+        child: const Icon(Icons.close, color: Colors.white),
+      ),
+      const SizedBox(height: 8),
+      // Outros controles essenciais...
+    ],
+  );
+}
+
+Widget _buildInfoOverlay() {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    decoration: BoxDecoration(
+      color: Colors.black54,
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Text(
+      _info,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 14,
+      ),
+      textAlign: TextAlign.center,
+    ),
+  );
+}
   
   // Cria um botão destacado para um modelo
   Widget _buildModelButton(ARModelInfo model) {
