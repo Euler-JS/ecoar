@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:ar_flutter_plugin/managers/ar_location_manager.dart';
+import 'package:ecoar_beira/core/utils/logger.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:ar_flutter_plugin/ar_flutter_plugin.dart';
@@ -24,6 +25,7 @@ class RealARPage extends StatefulWidget {
 }
 
 class _RealARPageState extends State<RealARPage> {
+  Map<String, ARModelInfo> _nodeToModelMap = {};
   ARSessionManager? arSessionManager;
   ARObjectManager? arObjectManager;
   ARAnchorManager? arAnchorManager;
@@ -137,27 +139,41 @@ class _RealARPageState extends State<RealARPage> {
           
           // Coloca a árvore com escala maior para garantir visibilidade
           var treeModel = _availableModels[0];
-          _availableModels[0] = ARModelInfo(
-            name: treeModel.name,
-            icon: treeModel.icon,
-            uri: treeModel.uri,
-            scale: Vector3(50, 50, 50), // Aumenta escala para visibilidade
-            position: Vector3(0.0, 0.0, 0.0),
-            rotation: treeModel.rotation,
-          );
-          await _addNode(centerAnchor, _availableModels[0]);
-          
-          // Coloca a flor ao lado
-          var flowerModel = _availableModels[1];
-          _availableModels[1] = ARModelInfo(
-            name: flowerModel.name,
-            icon: flowerModel.icon,
-            uri: flowerModel.uri,
-            scale: Vector3(50, 50, 50), // Aumenta escala para visibilidade
-            position: Vector3(5, 0.0, 0.0), // Posiciona ao lado da árvore
-            rotation: flowerModel.rotation,
-          );
-          await _addNode(centerAnchor, _availableModels[1]);
+          var updatedTreeModel = ARModelInfo(
+  name: treeModel.name,
+  icon: treeModel.icon,
+  uri: treeModel.uri,
+  scale: Vector3(50, 50, 50), // Nova escala
+  position: Vector3(0.0, 0.0, 0.0),
+  rotation: treeModel.rotation,
+  // ✅ MANTER TODOS OS DADOS ORIGINAIS
+  description: treeModel.description,
+  scientificName: treeModel.scientificName,
+  benefits: treeModel.benefits,
+  care: treeModel.care,
+  points: treeModel.points,
+  location: treeModel.location,
+);
+await _addNode(centerAnchor, updatedTreeModel);
+
+// Mesmo para a flor
+var flowerModel = _availableModels[1];
+var updatedFlowerModel = ARModelInfo(
+  name: flowerModel.name,
+  icon: flowerModel.icon,
+  uri: flowerModel.uri,
+  scale: Vector3(50, 50, 50),
+  position: Vector3(5, 0.0, 0.0),
+  rotation: flowerModel.rotation,
+  // ✅ MANTER TODOS OS DADOS ORIGINAIS
+  description: flowerModel.description,
+  scientificName: flowerModel.scientificName,
+  benefits: flowerModel.benefits,
+  care: flowerModel.care,
+  points: flowerModel.points,
+  location: flowerModel.location,
+);
+await _addNode(centerAnchor, updatedFlowerModel);
           
           setState(() {
             _info = '✅ Bem-vindo ao EcoAR! Toque nos botões para adicionar mais modelos';
@@ -217,15 +233,15 @@ class _RealARPageState extends State<RealARPage> {
                     ),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _buildModelButton(_availableModels[0]), // Árvore
-                      const SizedBox(width: 20),
-                      _buildModelButton(_availableModels[1]), // Flor
-                    ],
-                  ),
+                  // const SizedBox(height: 12),
+                  // Row(
+                  //   mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  //   children: [
+                  //     _buildModelButton(_availableModels[0]), // Árvore
+                  //     const SizedBox(width: 20),
+                  //     _buildModelButton(_availableModels[1]), // Flor
+                  //   ],
+                  // ),
                 ],
               ),
             ),
@@ -315,6 +331,7 @@ class _RealARPageState extends State<RealARPage> {
     
     // 🆕 MOSTRAR DETALHES
     if (clickedModel != null) {
+      AppLogger.i('Modelo detectado3: ${clickedModel.name } para o nó $objectName com ícone ${clickedModel.icon} e URI ${clickedModel.uri} e escala ${clickedModel.scale} e posição ${clickedModel.position} e rotação ${clickedModel.rotation}  e descrição ${clickedModel.description} e nome científico ${clickedModel.scientificName} e benefícios ${clickedModel.benefits} e cuidados ${clickedModel.care} e pontos ${clickedModel.points} e localização ${clickedModel.location}');
       _showObjectDetails(clickedModel);
     } else {
       setState(() {
@@ -325,6 +342,7 @@ class _RealARPageState extends State<RealARPage> {
 }
 
 void _showObjectDetails(ARModelInfo model) {
+  AppLogger.i('Modelo detectado: ${model.name } para  com ícone ${model.icon} e URI ${model.uri} e escala ${model.scale} e posição ${model.position} e rotação ${model.rotation}  e descrição ${model.description} e nome científico ${model.scientificName} e benefícios ${model.benefits} e cuidados ${model.care} e pontos ${model.points} e localização ${model.location}');
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
@@ -335,14 +353,21 @@ void _showObjectDetails(ARModelInfo model) {
 
 // Função auxiliar para encontrar o modelo
 ARModelInfo? _findModelByNodeName(String nodeName) {
-  // Usar o índice do nó para identificar o modelo
-  int nodeIndex = nodes.length - 1; // Último nó adicionado
-  
-  if (nodeIndex >= 0 && nodeIndex < _availableModels.length) {
-    return _availableModels[nodeIndex % _availableModels.length];
+  // Primeiro, tentar encontrar no mapa
+  if (_nodeToModelMap.containsKey(nodeName)) {
+    return _nodeToModelMap[nodeName];
   }
   
-  // Fallback: retornar primeiro modelo
+  // Fallback: verificar por conteúdo do nome
+  for (var model in _availableModels) {
+    if (nodeName.toLowerCase().contains(model.name.toLowerCase()) || 
+        nodeName.contains(model.icon)) {
+      AppLogger.i('Modelo detectado: ${model.name } para o nó $nodeName com ícone ${model.icon} e URI ${model.uri} e escala ${model.scale} e posição ${model.position} e rotação ${model.rotation}  e descrição ${model.description} e nome científico ${model.scientificName} e benefícios ${model.benefits} e cuidados ${model.care} e pontos ${model.points} e localização ${model.location}');
+      return model; 
+    }
+  }
+  
+  // Se nada funcionou, retornar primeiro modelo
   return _availableModels.isNotEmpty ? _availableModels[0] : null;
 }
 
@@ -388,34 +413,30 @@ ARModelInfo? _findModelByNodeName(String nodeName) {
   }
 
   Future<void> _addNode(ARPlaneAnchor anchor, ARModelInfo modelInfo) async {
-    try {
-      // Cria o nó AR com o modelo selecionado
-      var newNode = ARNode(
-        type: NodeType.localGLTF2,
-        uri: modelInfo.uri,
-        scale: modelInfo.scale,
-        position: modelInfo.position ?? Vector3(0.0, 0.0, 0.0),
-        rotation: modelInfo.rotation ?? Vector4(1.0, 0.0, 0.0, 0.0),
-      );
+  try {
+    var newNode = ARNode(
+      type: NodeType.localGLTF2,
+      uri: modelInfo.uri,
+      scale: modelInfo.scale,
+      position: modelInfo.position ?? Vector3(0.0, 0.0, 0.0),
+      rotation: modelInfo.rotation ?? Vector4(1.0, 0.0, 0.0, 0.0),
+    );
 
-      bool? didAddNodeToAnchor = await this.arObjectManager!.addNode(newNode, planeAnchor: anchor);
-      if (didAddNodeToAnchor!) {
-        this.nodes.add(newNode);
-        setState(() {
-          _info = '✅ ${modelInfo.icon} ${modelInfo.name} adicionado!';
-        });
-      } else {
-        setState(() {
-          _info = '❌ Erro ao carregar modelo';
-        });
-      }
-    } catch (e) {
-      print("Erro ao adicionar nó: $e");
+    bool? didAddNodeToAnchor = await this.arObjectManager!.addNode(newNode, planeAnchor: anchor);
+    if (didAddNodeToAnchor!) {
+      this.nodes.add(newNode);
+      
+      // 🆕 MAPEAR O NÓ AO MODELO
+      _nodeToModelMap[newNode.name ?? ''] = modelInfo;
+      
       setState(() {
-        _info = '❌ Erro ao carregar modelo: $e';
+        _info = '✅ ${modelInfo.icon} ${modelInfo.name} adicionado!';
       });
     }
+  } catch (e) {
+    print("Erro ao adicionar nó: $e");
   }
+}
 
   _onPanStarted(String nodeName) {
     setState(() {
