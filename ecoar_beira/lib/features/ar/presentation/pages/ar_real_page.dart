@@ -205,47 +205,48 @@ await _addNode(centerAnchor, updatedFlowerModel);
             onARViewCreated: _onARViewCreated,
             planeDetectionConfig: PlaneDetectionConfig.horizontal,
           ),
-          Positioned(
-            bottom: 20,
-            left: 20,
-            right: 20,
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.black87,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.5),
-                    blurRadius: 10,
-                    spreadRadius: 2,
-                  ),
-                ],
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    _info,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  // const SizedBox(height: 12),
-                  // Row(
-                  //   mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  //   children: [
-                  //     _buildModelButton(_availableModels[0]), // Árvore
-                  //     const SizedBox(width: 20),
-                  //     _buildModelButton(_availableModels[1]), // Flor
-                  //   ],
-                  // ),
-                ],
-              ),
-            ),
-          ),
+          // Positioned(
+          //   bottom: 20,
+          //   left: 20,
+          //   right: 20,
+          //   child: Container(
+          //     padding: const EdgeInsets.all(16),
+          //     decoration: BoxDecoration(
+          //       color: Colors.black87,
+          //       borderRadius: BorderRadius.circular(12),
+          //       boxShadow: [
+          //         BoxShadow(
+          //           color: Colors.black.withOpacity(0.5),
+          //           blurRadius: 10,
+          //           spreadRadius: 2,
+          //         ),
+          //       ],
+          //     ),
+          //     child: Column(
+          //       children: [
+          //         // Text(
+          //         //   _info,
+          //         //   style: const TextStyle(
+          //         //     color: Colors.white,
+          //         //     fontSize: 16,
+          //         //     fontWeight: FontWeight.bold,
+          //         //   ),
+          //         //   textAlign: TextAlign.center,
+          //         // ),
+          //         // const SizedBox(height: 12),
+          //         // Row(
+          //         //   mainAxisAlignment: MainAxisAlignment.spaceAround,
+          //         //   children: [
+          //         //     _buildModelButton(_availableModels[0]), // Árvore
+          //         //     const SizedBox(width: 20),
+          //         //     _buildModelButton(_availableModels[1]), // Flor
+          //         //   ],
+          //         // ),
+          //       ],
+          //     ),
+          //   ),
+          // ),
+        
         ],
       ),
     );
