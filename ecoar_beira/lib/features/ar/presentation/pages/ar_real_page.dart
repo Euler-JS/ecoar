@@ -188,8 +188,12 @@ await _addNode(centerAnchor, updatedFlowerModel);
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('🌱 EcoAR'),
-        backgroundColor: Colors.green,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        toolbarHeight: 0, // Altura zero
+        systemOverlayStyle: SystemUiOverlayStyle.light,
+        // title: const Text('🌱 EcoAR'),
+        // backgroundColor: Colors.green,
         actions: [
           IconButton(
             icon: const Icon(Icons.delete),
@@ -199,6 +203,9 @@ await _addNode(centerAnchor, updatedFlowerModel);
           ),
         ],
       ),
+      extendBody: true,
+  extendBodyBehindAppBar: true,
+  backgroundColor: Colors.black,
       body: Stack(
         children: [
           ARView(
