@@ -46,7 +46,7 @@ class _RealARPageState extends State<RealARPage> {
     ARModelInfo(
       name: "Flor",
       icon: "🌸",
-      uri: "assets/ar_models/Bem_vindo_ao_EcoAR__0725110411_texture.glb",
+      uri: "assets/ar_models/Distinguished_Gentlem_0725173157_texture.glb",
       scale: Vector3(100.0, 100.0, 100.0),
       // position: Vector3(0.2, 0.0, 0.2),
     ),
@@ -196,14 +196,14 @@ class _RealARPageState extends State<RealARPage> {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 12),
-                  // Row(
-                  //   mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  //   children: [
-                  //     _buildModelButton(_availableModels[0]), // Árvore
-                  //     const SizedBox(width: 20),
-                  //     _buildModelButton(_availableModels[1]), // Flor
-                  //   ],
-                  // ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _buildModelButton(_availableModels[0]), // Árvore
+                      const SizedBox(width: 20),
+                      _buildModelButton(_availableModels[1]), // Flor
+                    ],
+                  ),
                 ],
               ),
             ),
