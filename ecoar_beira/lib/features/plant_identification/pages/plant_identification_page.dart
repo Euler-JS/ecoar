@@ -749,4 +749,5 @@ class _PlantIdentificationPageState extends State<PlantIdentificationPage>
       ),
     );
   }
+
 }
