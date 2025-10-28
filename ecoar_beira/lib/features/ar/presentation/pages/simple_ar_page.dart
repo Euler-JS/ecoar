@@ -5,16 +5,16 @@ import 'package:flutter_3d_controller/flutter_3d_controller.dart';
 import 'package:ecoar_beira/core/theme/app_theme.dart';
 import 'package:ecoar_beira/core/utils/logger.dart';
 
-class RealARPage extends StatefulWidget {
+class SimpleARPage extends StatefulWidget {
   final String? qrCode;
 
-  const RealARPage({super.key, this.qrCode});
+  const SimpleARPage({super.key, this.qrCode});
 
   @override
-  State<RealARPage> createState() => _RealARPageState();
+  State<SimpleARPage> createState() => _SimpleARPageState();
 }
 
-class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
+class _SimpleARPageState extends State<SimpleARPage> with TickerProviderStateMixin {
   // Camera
   CameraController? _cameraController;
   List<CameraDescription> _cameras = [];
@@ -25,7 +25,7 @@ class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
 
   // State
   bool _isLoading = true;
-  bool _show3DModelOverlay = false;
+  bool _show3DModel = false;
   String _currentInfo = 'Inicializando câmera...';
   double _modelScale = 1.0;
   double _modelRotation = 0.0;
@@ -73,7 +73,7 @@ class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
       // Initialize camera controller
       _cameraController = CameraController(
         _cameras.first,
-        ResolutionPreset.high,
+        ResolutionPreset.medium, // Lower resolution for better performance
         enableAudio: false,
       );
 
@@ -82,7 +82,7 @@ class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
       if (mounted) {
         setState(() {
           _isCameraInitialized = true;
-          _currentInfo = 'Câmera pronta! Toque no botão AR para ver o modelo 3D';
+          _currentInfo = 'Câmera pronta! Toque no botão AR para ver o modelo Albano';
           _isLoading = false;
         });
         _fadeController.forward();
@@ -102,7 +102,7 @@ class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('Experiência AR Real'),
+        title: const Text('AR - Modelo Albano'),
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
@@ -132,7 +132,7 @@ class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
           if (_isLoading) _buildLoadingOverlay(),
 
           // 3D Model overlay
-          if (_show3DModelOverlay) _build3DOverlay(),
+          if (_show3DModel) _build3DOverlay(),
 
           // Controls
           _buildControls(),
@@ -172,45 +172,42 @@ class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
   Widget _build3DOverlay() {
     return Positioned.fill(
       child: GestureDetector(
-        onScaleStart: (_) {},
+        onTap: _hide3DModel,
         onScaleUpdate: _onScaleUpdate,
-        onScaleEnd: (_) {},
+        onPanUpdate: _onPanUpdate,
         child: Container(
           color: Colors.transparent,
-          child: GestureDetector(
-            onTap: _hide3DModel,
-            child: Center(
-              child: Transform.scale(
-                scale: _modelScale,
-                child: Transform.rotate(
-                  angle: _modelRotation,
-                  child: Container(
-                    width: 300,
-                    height: 300,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 10,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Flutter3DViewer(
-                        controller: _controller3D,
-                        src: 'assets/ar_models/albano.glb',
-                        onLoad: (String modelAddress) {
-                          AppLogger.i('Modelo 3D carregado: $modelAddress');
-                          _controller3D.setCameraOrbit(0, 0, 2);
-                          _controller3D.setCameraTarget(0, 0, 0);
-                        },
-                        onError: (String error) {
-                          AppLogger.e('Erro ao carregar modelo 3D: $error');
-                        },
+          child: Center(
+            child: Transform.scale(
+              scale: _modelScale,
+              child: Transform.rotate(
+                angle: _modelRotation,
+                child: Container(
+                  width: 250,
+                  height: 250,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.3),
+                        blurRadius: 10,
+                        spreadRadius: 2,
                       ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Flutter3DViewer(
+                      controller: _controller3D,
+                      src: 'assets/ar_models/albano.glb',
+                      onLoad: (String modelAddress) {
+                        AppLogger.i('Modelo 3D Albano carregado: $modelAddress');
+                        _controller3D.setCameraOrbit(0, 0, 2);
+                        _controller3D.setCameraTarget(0, 0, 0);
+                      },
+                      onError: (String error) {
+                        AppLogger.e('Erro ao carregar modelo Albano: $error');
+                      },
                     ),
                   ),
                 ),
@@ -231,19 +228,16 @@ class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           FloatingActionButton(
-            heroTag: 'ar_toggle_button',
             onPressed: _toggle3DModel,
             backgroundColor: AppTheme.primaryGreen,
-            child: const Icon(Icons.view_in_ar),
+            child: Icon(_show3DModel ? Icons.visibility_off : Icons.view_in_ar),
           ),
           FloatingActionButton(
-            heroTag: 'ar_play_button',
             onPressed: _playAnimation,
             backgroundColor: AppTheme.primaryBlue,
             child: const Icon(Icons.play_arrow),
           ),
           FloatingActionButton(
-            heroTag: 'ar_camera_button',
             onPressed: _takeScreenshot,
             backgroundColor: AppTheme.accentGreen,
             child: const Icon(Icons.camera_alt),
@@ -284,39 +278,43 @@ class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
 
   void _toggle3DModel() {
     setState(() {
-      _show3DModelOverlay = !_show3DModelOverlay;
-      if (_show3DModelOverlay) {
-        _currentInfo = 'Modelo 3D ativo! Toque para ocultar, arraste horizontalmente para rotacionar, pinch para zoom';
+      _show3DModel = !_show3DModel;
+      if (_show3DModel) {
+        _currentInfo = 'Modelo Albano ativo! Toque para ocultar, arraste para mover';
       } else {
-        _currentInfo = 'Câmera pronta! Toque no botão AR para ver o modelo 3D';
+        _currentInfo = 'Câmera pronta! Toque no botão AR para ver o modelo Albano';
       }
     });
   }
 
   void _hide3DModel() {
     setState(() {
-      _show3DModelOverlay = false;
-      _currentInfo = 'Câmera pronta! Toque no botão AR para ver o modelo 3D';
+      _show3DModel = false;
+      _currentInfo = 'Câmera pronta! Toque no botão AR para ver o modelo Albano';
     });
   }
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
-    if (_show3DModelOverlay) {
+    if (_show3DModel) {
       setState(() {
         _modelScale = (_modelScale * details.scale).clamp(0.5, 3.0);
-        // Usar o movimento horizontal do scale para rotação
-        if (details.pointerCount == 1) {
-          _modelRotation += details.focalPointDelta.dx * 0.01;
-        }
+      });
+    }
+  }
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    if (_show3DModel) {
+      setState(() {
+        _modelRotation += details.delta.dx * 0.01;
       });
     }
   }
 
   void _playAnimation() {
-    if (_show3DModelOverlay) {
+    if (_show3DModel) {
       _controller3D.playAnimation();
       setState(() {
-        _currentInfo = 'Animação reproduzindo...';
+        _currentInfo = 'Animação do Albano reproduzindo...';
       });
     }
   }
@@ -333,10 +331,10 @@ class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
 
   void _resetAR() {
     setState(() {
-      _show3DModelOverlay = false;
+      _show3DModel = false;
       _modelScale = 1.0;
       _modelRotation = 0.0;
-      _currentInfo = 'AR resetado! Toque no botão para ver o modelo 3D';
+      _currentInfo = 'AR resetado! Toque no botão para ver o modelo Albano';
     });
   }
 
@@ -346,7 +344,7 @@ class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
       builder: (context) => AlertDialog(
         backgroundColor: AppTheme.backgroundDark,
         title: const Text(
-          'Sobre a Experiência AR',
+          'Experiência AR - Albano',
           style: TextStyle(color: AppTheme.primaryGreen),
         ),
         content: const SingleChildScrollView(
@@ -355,7 +353,7 @@ class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'Esta é uma experiência de Realidade Aumentada que combina:',
+                'Esta experiência mostra o modelo 3D "Albano" sobreposto à câmera ao vivo:',
                 style: TextStyle(color: AppTheme.backgroundLight),
               ),
               SizedBox(height: 12),
@@ -364,7 +362,7 @@ class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
                 style: TextStyle(color: AppTheme.textSecondary),
               ),
               Text(
-                '• Modelo 3D "Albano" sobreposto',
+                '• Modelo 3D Albano sobreposto',
                 style: TextStyle(color: AppTheme.textSecondary),
               ),
               Text(
@@ -372,7 +370,7 @@ class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
                 style: TextStyle(color: AppTheme.textSecondary),
               ),
               Text(
-                '• Animações e efeitos visuais',
+                '• Animações disponíveis',
                 style: TextStyle(color: AppTheme.textSecondary),
               ),
               SizedBox(height: 16),
@@ -385,15 +383,19 @@ class _RealARPageState extends State<RealARPage> with TickerProviderStateMixin {
               ),
               SizedBox(height: 8),
               Text(
-                '1. Toque no botão AR para mostrar o modelo',
+                '1. Toque no botão AR para mostrar Albano',
                 style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
               ),
               Text(
-                '2. Use gestos para interagir (pinch para zoom, arrastar horizontalmente para rotacionar)',
+                '2. Use gestos para interagir (pinch para zoom, arrastar para rotacionar)',
                 style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
               ),
               Text(
                 '3. Toque no play para animações',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+              ),
+              Text(
+                '4. Toque no modelo para ocultá-lo',
                 style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
               ),
             ],

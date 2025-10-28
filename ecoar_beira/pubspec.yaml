@@ -49,14 +49,11 @@ dependencies:
   shimmer: ^3.0.0
   flutter_animate: ^4.3.0
 
-  # Audio
-  audioplayers: ^5.2.1
+  # AR & 3D
   flutter_3d_controller: ^2.2.0
   model_viewer_plus: ^1.9.3
-  sensors_plus: ^6.1.1
-  device_info_plus: ^11.5.0
-  vector_math: ^2.1.4
-  get_it: ^8.0.3
+  # get_it: ^8.0.3  # Temporarily disabled
+  # device_info_plus: ^11.5.0  # Temporarily disabled
   
 dev_dependencies:
   flutter_test:
