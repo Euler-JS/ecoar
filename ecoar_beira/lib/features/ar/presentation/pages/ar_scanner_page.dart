@@ -1,18 +1,9 @@
 // ar_scanner_page.dart - Integração AR + Scanner
+// Temporariamente apenas scanner - AR indisponível
 import 'dart:async';
-import 'package:ar_flutter_plugin/managers/ar_location_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:ar_flutter_plugin/ar_flutter_plugin.dart';
-import 'package:ar_flutter_plugin/datatypes/config_planedetection.dart';
-import 'package:ar_flutter_plugin/datatypes/node_types.dart';
-import 'package:ar_flutter_plugin/managers/ar_anchor_manager.dart';
-import 'package:ar_flutter_plugin/managers/ar_object_manager.dart';
-import 'package:ar_flutter_plugin/managers/ar_session_manager.dart';
-import 'package:ar_flutter_plugin/models/ar_anchor.dart';
-import 'package:ar_flutter_plugin/models/ar_hittest_result.dart';
-import 'package:ar_flutter_plugin/models/ar_node.dart';
-import 'package:vector_math/vector_math_64.dart' hide Colors;
+import 'package:ecoar_beira/core/theme/app_theme.dart';
 
 class ARScannerPage extends StatefulWidget {
   const ARScannerPage({super.key});
@@ -21,89 +12,155 @@ class ARScannerPage extends StatefulWidget {
   State<ARScannerPage> createState() => _ARScannerPageState();
 }
 
-class _ARScannerPageState extends State<ARScannerPage> {
-  // Scanner (que já funciona)
-  MobileScannerController? scannerController;
-  
-  // AR Controllers  
-  ARSessionManager? arSessionManager;
-  ARObjectManager? arObjectManager;
-  ARAnchorManager? arAnchorManager;
-  
+class _ARScannerPageState extends State<ARScannerPage>
+    with TickerProviderStateMixin {
+
+  // Controllers
+  MobileScannerController? _scannerController;
+
+  // Animations
+  late AnimationController _fadeController;
+  late AnimationController _bounceController;
+  late Animation<double> _fadeAnimation;
+  late Animation<double> _bounceAnimation;
+
   // State
-  bool _useScanner = true; // Alternar entre Scanner e AR
-  bool _arInitialized = false;
-  String _lastScannedCode = '';
-  String _info = 'Scanner ativo - Escaneie QR Code';
-  
-  // AR Objects
-  List<ARNode> nodes = <ARNode>[];
-  List<ARAnchor> anchors = <ARAnchor>[];
+  bool _isLoading = true;
+  String _scannedData = '';
+  String _info = 'Scanner ativo - Posicione QR Code na tela';
 
   @override
   void initState() {
     super.initState();
+    _setupAnimations();
     _initializeScanner();
   }
 
   @override
   void dispose() {
-    scannerController?.dispose();
-    arSessionManager?.dispose();
+    _scannerController?.dispose();
+    _fadeController.dispose();
+    _bounceController.dispose();
     super.dispose();
   }
 
+  void _setupAnimations() {
+    _fadeController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _bounceController = AnimationController(
+      duration: const Duration(milliseconds: 1200),
+      vsync: this,
+    );
+
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _fadeController, curve: Curves.easeInOut),
+    );
+    _bounceAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
+      CurvedAnimation(parent: _bounceController, curve: Curves.elasticOut),
+    );
+  }
+
   void _initializeScanner() {
-    scannerController = MobileScannerController(
+    _scannerController = MobileScannerController(
       detectionSpeed: DetectionSpeed.noDuplicates,
       facing: CameraFacing.back,
-      torchEnabled: false,
     );
+
+    setState(() {
+      _info = 'Scanner ativo - Posicione QR Code na tela';
+      _isLoading = false;
+    });
+    _fadeController.forward();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.backgroundDark,
       appBar: AppBar(
-        title: Text(_useScanner ? '📱 Scanner Mode' : '🌱 AR Mode'),
-        backgroundColor: _useScanner ? Colors.blue : Colors.green,
-        actions: [
-          IconButton(
-            icon: Icon(_useScanner ? Icons.view_in_ar : Icons.qr_code_scanner),
-            onPressed: _toggleMode,
-          ),
-        ],
+        title: const Row(
+          children: [
+            Icon(Icons.qr_code_scanner),
+            SizedBox(width: 8),
+            Text('EcoAR Scanner'),
+          ],
+        ),
+        backgroundColor: AppTheme.primaryBlue,
+        elevation: 0,
       ),
       body: Stack(
         children: [
-          // Base camera/AR view
-          _useScanner ? _buildScannerView() : _buildARView(),
-          
-          // Info overlay
-          _buildInfoOverlay(),
-          
-          // Mode toggle button
-          _buildModeToggle(),
+          // Main content
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 600),
+            child: _isLoading
+                ? _buildLoadingScreen()
+                : _buildScannerScreen(),
+          ),
+
+          // Status overlay
+          _buildStatusOverlay(),
         ],
       ),
     );
   }
 
-  Widget _buildScannerView() {
-    return MobileScanner(
-      controller: scannerController!,
-      onDetect: _onQRCodeDetected,
-      overlay: Container(
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.blue, width: 2),
+  Widget _buildLoadingScreen() {
+    return Container(
+      key: const ValueKey('loading'),
+      color: AppTheme.accentGreen,
+      child: const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(color: AppTheme.primaryGreen),
+            SizedBox(height: 20),
+            Text(
+              'Inicializando EcoAR...',
+              style: TextStyle(color: AppTheme.primaryGreen, fontSize: 18),
+            ),
+          ],
         ),
-        child: const Center(
-          child: Text(
-            'Posicione o QR Code aqui',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              backgroundColor: Colors.black54,
+      ),
+    );
+  }
+
+  Widget _buildScannerScreen() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: Container(
+        key: const ValueKey('scanner'),
+        child: MobileScanner(
+          controller: _scannerController!,
+          onDetect: _onQRCodeDetected,
+          overlay: Container(
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: AppTheme.primaryBlue,
+                width: 3,
+              ),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            margin: const EdgeInsets.all(50),
+            child: const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.center_focus_strong, size: 80, color: AppTheme.backgroundLight),
+                  SizedBox(height: 20),
+                  Text(
+                    'Posicione o QR Code aqui',
+                    style: TextStyle(
+                      color: AppTheme.primaryBlue,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      backgroundColor: AppTheme.backgroundDark,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -111,257 +168,135 @@ class _ARScannerPageState extends State<ARScannerPage> {
     );
   }
 
-  Widget _buildARView() {
-    if (!_arInitialized) {
-      return ARView(
-        onARViewCreated: _onARViewCreated,
-        planeDetectionConfig: PlaneDetectionConfig.horizontal,
-      );
-    }
-    
-    return ARView(
-      onARViewCreated: _onARViewCreated,
-      planeDetectionConfig: PlaneDetectionConfig.horizontal,
-    );
-  }
-
-  Widget _buildInfoOverlay() {
+  Widget _buildStatusOverlay() {
     return Positioned(
       top: 20,
       left: 20,
       right: 20,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.black87,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          children: [
-            Text(
-              _info,
-              style: const TextStyle(color: Colors.white, fontSize: 14),
-              textAlign: TextAlign.center,
+      child: ScaleTransition(
+        scale: _bounceAnimation,
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppTheme.backgroundDark,
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(
+              color: AppTheme.primaryBlue,
+              width: 2,
             ),
-            if (_lastScannedCode.isNotEmpty) ...[
-              const SizedBox(height: 8),
+          ),
+          child: Column(
+            children: [
               Text(
-                'Último código: $_lastScannedCode',
-                style: const TextStyle(color: Colors.yellow, fontSize: 12),
+                _info,
+                style: const TextStyle(
+                  color: AppTheme.backgroundLight,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
                 textAlign: TextAlign.center,
               ),
-            ],
-            if (!_useScanner && _arInitialized) ...[
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  ElevatedButton(
-                    onPressed: _loadScannedContent,
-                    child: const Text('📦 Carregar'),
-                  ),
-                  ElevatedButton(
-                    onPressed: _clearAR,
-                    child: const Text('🗑️ Limpar'),
-                  ),
-                ],
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildModeToggle() {
-    return Positioned(
-      bottom: 30,
-      left: 20,
-      right: 20,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.black87,
-          borderRadius: BorderRadius.circular(25),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: GestureDetector(
-                onTap: () => _setMode(true),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+              if (_scannedData.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: _useScanner ? Colors.blue : Colors.transparent,
-                    borderRadius: BorderRadius.circular(25),
+                    color: AppTheme.primaryGreen,
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Text(
-                    '📱 Scanner',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  child: Text(
+                    'Código: $_scannedData',
+                    style: const TextStyle(
+                      color: AppTheme.backgroundLight,
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                    ),
                   ),
                 ),
-              ),
-            ),
-            Expanded(
-              child: GestureDetector(
-                onTap: () => _setMode(false),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  decoration: BoxDecoration(
-                    color: !_useScanner ? Colors.green : Colors.transparent,
-                    borderRadius: BorderRadius.circular(25),
-                  ),
-                  child: const Text(
-                    '🌱 AR',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-            ),
-          ],
+              ],
+            ],
+          ),
         ),
       ),
     );
   }
 
   void _onQRCodeDetected(BarcodeCapture capture) {
-    final List<Barcode> barcodes = capture.barcodes;
-    for (final barcode in barcodes) {
+    for (final barcode in capture.barcodes) {
       final String? code = barcode.rawValue;
-      if (code != null && code != _lastScannedCode) {
+      if (code != null && code != _scannedData) {
         setState(() {
-          _lastScannedCode = code;
-          _info = '✅ QR Code detectado! Alterne para AR para visualizar';
+          _scannedData = code;
+          _info = '✅ QR Code detectado! Código: $code';
         });
-        
-        // Automatically switch to AR after scanning
-        Future.delayed(const Duration(seconds: 2), () {
-          _setMode(false);
+
+        _bounceController.forward();
+
+        // Mostrar dialog com resultado
+        Timer(const Duration(seconds: 2), () {
+          _showResultDialog(code);
         });
         break;
       }
     }
   }
 
-  void _onARViewCreated(
-    ARSessionManager arSessionManager,
-    ARObjectManager arObjectManager,
-    ARAnchorManager arAnchorManager,
-    ARLocationManager arLocationManager,
-  ) {
-    this.arSessionManager = arSessionManager;
-    this.arObjectManager = arObjectManager;
-    this.arAnchorManager = arAnchorManager;
-
-    this.arSessionManager!.onInitialize(
-      showFeaturePoints: false,
-      showPlanes: true,
-      customPlaneTexturePath: null,
-      showWorldOrigin: false,
-      handlePans: true,
-      handleRotation: true,
+  void _showResultDialog(String code) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.backgroundDark,
+        title: const Text(
+          'QR Code Detectado!',
+          style: TextStyle(color: AppTheme.primaryGreen),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.check_circle,
+              color: AppTheme.primaryGreen,
+              size: 48,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Código: $code',
+              style: const TextStyle(
+                color: AppTheme.backgroundLight,
+                fontFamily: 'monospace',
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Funcionalidade AR temporariamente indisponível.\nO scanner QR está funcionando corretamente!',
+              style: TextStyle(color: AppTheme.textSecondary),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              setState(() {
+                _scannedData = '';
+                _info = 'Scanner ativo - Posicione QR Code na tela';
+              });
+            },
+            child: const Text(
+              'Escanear Outro',
+              style: TextStyle(color: AppTheme.primaryBlue),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text(
+              'Fechar',
+              style: TextStyle(color: AppTheme.primaryGreen),
+            ),
+          ),
+        ],
+      ),
     );
-    this.arObjectManager!.onInitialize();
-
-    this.arSessionManager!.onPlaneOrPointTap = _onPlaneOrPointTapped;
-
-    setState(() {
-      _arInitialized = true;
-      _info = '✅ AR Iniciado! Toque numa superfície para colocar objeto';
-    });
-  }
-
-  Future<void> _onPlaneOrPointTapped(List<ARHitTestResult> hitTestResults) async {
-    var singleHitTestResult = hitTestResults.firstOrNull;
-    if (singleHitTestResult != null) {
-      var newAnchor = ARPlaneAnchor(transformation: singleHitTestResult.worldTransform);
-      bool? didAddAnchor = await arAnchorManager!.addAnchor(newAnchor);
-      
-      if (didAddAnchor!) {
-        anchors.add(newAnchor);
-        await _loadScannedContent();
-      }
-    }
-  }
-
-  Future<void> _loadScannedContent() async {
-    if (anchors.isEmpty) {
-      setState(() {
-        _info = '❌ Toque numa superfície primeiro';
-      });
-      return;
-    }
-
-    var anchor = anchors.last;
-    ARNode? newNode;
-
-    // Diferentes conteúdos baseados no QR Code escaneado
-    if (_lastScannedCode.contains('tree') || _lastScannedCode.contains('arvore')) {
-      newNode = ARNode(
-        type: NodeType.webGLB,
-        uri: "https://euler-js.github.io/files_test/scene.gltf",
-        scale: Vector3(0.1, 0.1, 0.1),
-        position: Vector3(0.0, 0.0, 0.0),
-        rotation: Vector4(1.0, 0.0, 0.0, 0.0),
-      );
-    } else if (_lastScannedCode.contains('flower') || _lastScannedCode.contains('flor')) {
-      newNode = ARNode(
-        type: NodeType.localGLTF2,
-        uri: "assets/ar_models/flower.gltf",
-        scale: Vector3(0.3, 0.3, 0.3),
-        position: Vector3(0.0, 0.0, 0.0),
-        rotation: Vector4(1.0, 0.0, 0.0, 0.0),
-      );
-    } else {
-      // Conteúdo genérico para qualquer QR Code
-      newNode = ARNode(
-        type: NodeType.webGLB,
-        uri: "https://euler-js.github.io/files_test/scene.gltf",
-        scale: Vector3(0.1, 0.1, 0.1),
-        position: Vector3(0.0, 0.0, 0.0),
-        rotation: Vector4(1.0, 0.0, 0.0, 0.0),
-      );
-    }
-
-    bool? didAddNodeToAnchor = await arObjectManager!.addNode(newNode, planeAnchor: anchor);
-    if (didAddNodeToAnchor!) {
-      nodes.add(newNode);
-      setState(() {
-        _info = '🎯 Conteúdo AR carregado baseado no QR Code!';
-      });
-    } else {
-      setState(() {
-        _info = '❌ Erro ao carregar conteúdo AR';
-      });
-    }
-  }
-
-  void _toggleMode() {
-    _setMode(!_useScanner);
-  }
-
-  void _setMode(bool useScanner) {
-    setState(() {
-      _useScanner = useScanner;
-      if (_useScanner) {
-        _info = 'Scanner ativo - Escaneie QR Code';
-      } else {
-        _info = _arInitialized 
-          ? 'AR ativo - Toque numa superfície' 
-          : 'Inicializando AR...';
-      }
-    });
-  }
-
-  void _clearAR() async {
-    for (var anchor in anchors) {
-      arAnchorManager!.removeAnchor(anchor);
-    }
-    anchors.clear();
-    nodes.clear();
-    setState(() {
-      _info = '🗑️ AR limpo! Toque para recolocar';
-    });
   }
 }

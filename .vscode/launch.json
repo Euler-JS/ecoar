@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "lldb",
+      "request": "launch",
+      "args": [],
+      "cwd": "/Users/joaomuchunja/development/projects/ecoar/ecoar_beira/windows/flutter",
+      "program": "/Users/joaomuchunja/development/projects/ecoar/ecoar_beira/windows/flutter/build/Debug/outDebug"
+    }
+  ]
+}
